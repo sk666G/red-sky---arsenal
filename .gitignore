@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Build artifacts
+build/
+dist/
+*.exe
+*.dll
+*.so
+*.o
+*.pdb
+*.obj
+*.lib
+*.exp
+
+# Loot and logs
+Output/*
+!Output/.keep
+loot/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets — never commit
+Data/secrets.json
+Data/*.key
+.env
