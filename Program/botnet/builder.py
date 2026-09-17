@@ -130,6 +130,7 @@ class BeaconBuilder:
 
         cmd = [
             cc, "-O2", "-s", "-static", "-std=c++20",
+            "-I", str(TEMPLATE_DIR),
             "-o", str(out_exe), str(out_cpp),
             "-lws2_32", "-lwinhttp", "-lbcrypt", "-ladvapi32",
         ]
