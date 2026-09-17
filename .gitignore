@@ -37,3 +37,4 @@ Thumbs.db
 Data/secrets.json
 Data/*.key
 .env
+Data/cve_db.json
