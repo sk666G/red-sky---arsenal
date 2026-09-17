@@ -1,0 +1,60 @@
+{
+  "operator": {
+    "handle": "sk666G",
+    "email": "timking1996@proton.me"
+  },
+  "paths": {
+    "output": "Output",
+    "loot": "Output/loot"
+  },
+  "network": {
+    "timeout": 5,
+    "threads": 128,
+    "user_agent": "random",
+    "proxy": "",
+    "verify_tls": true
+  },
+  "c2": {
+    "host": "",
+    "port": 443,
+    "path": "/api/beacon",
+    "tls": true,
+    "sleep": 30000,
+    "jitter": 0.3,
+    "aes_key": ""
+  },
+  "botnet": {
+    "db": "Data/botnet.sqlite",
+    "panel_port": 8443,
+    "panel_host": "127.0.0.1",
+    "auth_user": "operator",
+    "auth_pass_hash": "",
+    "totp_secret": "",
+    "ip_allowlist": []
+  },
+  "phish": {
+    "catcher_host": "",
+    "catcher_port": 443,
+    "smtp_relay": "",
+    "smtp_user": "",
+    "smtp_pass": "",
+    "from_addr": ""
+  },
+  "cctv": {
+    "rtsp_port": 554,
+    "http_ports": [80, 8000, 8080, 8899],
+    "ffmpeg_path": "ffmpeg"
+  },
+  "ddos": {
+    "authorized_targets": [],
+    "max_rps": 50
+  },
+  "theme": {
+    "skin": "blood",
+    "emoji": true,
+    "banner_drip_ms": 20
+  },
+  "safety": {
+    "authorized_use_ack": false
+  }
+}

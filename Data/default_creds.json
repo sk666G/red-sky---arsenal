@@ -1,0 +1,57 @@
+{
+  "cctv": {
+    "hikvision": [
+      ["admin", "admin"],
+      ["admin", "12345"],
+      ["admin", "hik12345"],
+      ["admin", "Admin12345"]
+    ],
+    "dahua": [
+      ["admin", "admin"],
+      ["admin", "888888"],
+      ["admin", "666666"],
+      ["admin", "dahua123"]
+    ],
+    "axis": [
+      ["root", "pass"],
+      ["root", "axis"],
+      ["admin", "admin"]
+    ],
+    "reolink": [
+      ["admin", ""],
+      ["admin", "admin"]
+    ],
+    "foscam": [
+      ["admin", ""],
+      ["admin", "admin"],
+      ["admin", "foscam"]
+    ],
+    "vivotek": [
+      ["root", ""],
+      ["root", "admin"]
+    ],
+    "generic": [
+      ["admin", "admin"],
+      ["admin", "password"],
+      ["admin", "12345"],
+      ["admin", "1234"],
+      ["root", "root"],
+      ["root", "toor"],
+      ["user", "user"],
+      ["admin", ""],
+      ["root", ""]
+    ]
+  },
+  "routers": {
+    "tp-link": [["admin", "admin"], ["admin", "1234"]],
+    "netgear": [["admin", "password"], ["admin", "1234"]],
+    "linksys": [["admin", "admin"], ["admin", ""]],
+    "asus":    [["admin", "admin"], ["admin", "password"]],
+    "dlink":   [["admin", ""], ["admin", "admin"]]
+  },
+  "printers": {
+    "hp":    [["admin", ""], ["admin", "admin"]],
+    "canon": [["admin", "admin"], ["7654321", "7654321"]],
+    "epson": [["admin", "admin"], ["EPSONWEB", "admin"]]
+  }
+}
