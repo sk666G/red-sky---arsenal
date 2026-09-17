@@ -24,7 +24,7 @@ MODULES = {
     "cctv":          ("Program.cctv.dispatch",   "run_cli", "CCTV discover / creds / stream / kill"),
     "web":           ("Program.web.dispatch",    "run_cli", "web fingerprint + CVE match + deface"),
     "recon":         ("Program.recon.dispatch",  "run_cli", "host sweep + fingerprint + subs + osint"),
-    "geoip":         ("Program.geoip.lookup",    "run_cli", "multi-source IP geolocation"),
+    "geoip":         ("Program.geoip.dispatch",    "run_cli", "multi-source IP geolocation"),
 
     # offensive
     "phish":         ("Program.phish.dispatch",  "run_cli", "phishing campaign framework"),
