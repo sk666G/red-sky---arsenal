@@ -67,6 +67,11 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    # serve static frontend files
+    from fastapi.staticfiles import StaticFiles
+    if STATIC_DIR.exists():
+        app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
     # ── auth ──
     @app.post("/api/login")
     async def login(req: LoginRequest, request: Request):

