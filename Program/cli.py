@@ -37,7 +37,7 @@ MODULES = {
     "csint":         ("Program.csint.dispatch","run_cli","closed-source intelligence"),
     "wifi":          ("Program.wifi.dispatch",      "run_cli", "WiFi recon + handshake capture"),
     "bluetooth":     ("Program.bluetooth.dispatch",  "run_cli", "BLE scan + service dump"),
-    "rfid":          ("Program.rfid.reader",     "run_cli", "NFC / Mifare / HID read+clone"),
+    "rfid":          ("Program.rfid.dispatch",     "run_cli", "NFC / Mifare / HID read+clone"),
     "usb":           ("Program.usb.badusb",      "run_cli", "BadUSB / Rubber Ducky builder"),
     "social":        ("Program.social.profile",  "run_cli", "OSINT person profile"),
     "osint_face":    ("Program.osint_face.search","run_cli","face search + reverse image"),
