@@ -34,7 +34,7 @@ MODULES = {
     "crack":         ("Program.crack.dispatch",  "run_cli", "application cracking pipeline"),
     "botnet":        ("Program.botnet.dispatch", "run_cli", "botnet operator console"),
     "c2":            ("Program.c2.dispatch",     "run_cli", "C2 listener"),
-    "csint":         ("Program.csint.breach_index","run_cli","closed-source intelligence"),
+    "csint":         ("Program.csint.dispatch","run_cli","closed-source intelligence"),
     "wifi":          ("Program.wifi.recon",      "run_cli", "WiFi recon + handshake capture"),
     "bluetooth":     ("Program.bluetooth.scan",  "run_cli", "BLE scan + service dump"),
     "rfid":          ("Program.rfid.reader",     "run_cli", "NFC / Mifare / HID read+clone"),
