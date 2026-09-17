@@ -28,7 +28,7 @@ MODULES = {
 
     # offensive
     "phish":         ("Program.phish.catcher",   "run_cli", "phishing campaign framework"),
-    "creds":         ("Program.creds.spray",     "run_cli", "credential operations"),
+    "creds":         ("Program.creds.dispatch",  "run_cli", "credential operations"),
     "payload":       ("Program.payload.builder", "run_cli", "payload builder"),
     "evade":         ("Program.evade.toolkit",   "run_cli", "AMSI/ETW/unhook helpers"),
     "crack":         ("Program.crack.classifier","run_cli", "application cracking pipeline"),
