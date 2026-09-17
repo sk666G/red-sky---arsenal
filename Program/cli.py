@@ -32,7 +32,7 @@ MODULES = {
     "payload":       ("Program.payload.dispatch","run_cli", "payload builder"),
     "evade":         ("Program.evade.dispatch",  "run_cli", "AMSI/ETW/unhook helpers"),
     "crack":         ("Program.crack.dispatch",  "run_cli", "application cracking pipeline"),
-    "botnet":        ("Program.botnet.panel",    "run_cli", "botnet operator console"),
+    "botnet":        ("Program.botnet.dispatch", "run_cli", "botnet operator console"),
     "c2":            ("Program.c2.dispatch",     "run_cli", "C2 listener"),
     "csint":         ("Program.csint.breach_index","run_cli","closed-source intelligence"),
     "wifi":          ("Program.wifi.recon",      "run_cli", "WiFi recon + handshake capture"),
