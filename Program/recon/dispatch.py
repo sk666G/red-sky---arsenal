@@ -28,7 +28,19 @@ def _usage():
     print_info("  leakdb <index|email|password|domain|stats> ...")
 
 
+def cmd_update_cve():
+    import subprocess, sys
+    from pathlib import Path as _P
+    script = _P(__file__).resolve().parent.parent.parent / "Data" / "update_cve.py"
+    if not script.exists():
+        print_err(f"missing: {script}")
+        return 1
+    return subprocess.call([sys.executable, str(script)])
+
+
 def run_cli(args: List[str]) -> int:
+    if args and args[0] == "update-cve":
+        return cmd_update_cve()
     if not args:
         _usage()
         return 2
