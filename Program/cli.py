@@ -20,7 +20,7 @@ log = get_logger("cli")
 # ─────────────────────────────────────────────────────────────
 MODULES = {
     # recon / network
-    "ipgrab":        ("Program.ipgrab.server",   "run_cli", "IP logger + geo + webhook"),
+    "ipgrab":        ("Program.ipgrab.dispatch", "run_cli", "IP logger + geo + webhook"),
     "cctv":          ("Program.cctv.discover",   "run_cli", "CCTV discover / creds / stream / kill"),
     "web":           ("Program.web.triage",      "run_cli", "web fingerprint + CVE match + deface"),
     "recon":         ("Program.recon.dispatch",  "run_cli", "host sweep + fingerprint + subs + osint"),
