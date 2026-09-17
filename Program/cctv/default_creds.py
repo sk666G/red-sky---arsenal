@@ -14,6 +14,8 @@ import requests
 from Program.theme.palette import SCARLET, ARTERY, BONE, ASH, OK, CLOT, RESET, BOLD
 from Program.utils import load_config, print_ok, print_err, print_info, print_warn, print_kv, print_bullet
 from Program.utils.paths import OUTPUT_DIR, DATA_DIR
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 CREDS_FILE = DATA_DIR / "default_creds.json"

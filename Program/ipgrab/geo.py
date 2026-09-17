@@ -10,6 +10,8 @@ from typing import Dict, Optional
 import requests
 
 from Program.utils.paths import DATA_DIR
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 CACHE_FILE = DATA_DIR / "geoip_cache.json"

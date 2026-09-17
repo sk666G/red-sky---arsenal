@@ -11,6 +11,8 @@ from typing import Dict, List, Optional
 from Program.theme.palette import SCARLET, ARTERY, BONE, ASH, OK, CLOT, RESET, BOLD
 from Program.utils import load_config, print_ok, print_err, print_info, print_warn, print_kv, print_bullet, print_table
 from Program.utils.paths import OUTPUT_DIR
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 # top service ports — fast default scan

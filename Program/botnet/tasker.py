@@ -6,6 +6,7 @@ import json
 import time
 from typing import Dict, List, Optional
 
+from Program.theme.palette import SCARLET, ARTERY, BONE, ASH, OK, CLOT, RESET, BOLD
 from Program.utils import print_ok, print_err, print_info, print_warn, print_kv
 from Program.c2.session import SessionStore
 
@@ -89,7 +90,19 @@ def run_cli(args) -> int:
             print_kv(k, v)
         return 0
     if args[0] == "queue" and len(args) >= 3:
-        tid = t.queue(args[1], args[2], {})
+        bot_id = args[1]
+        command = args[2]
+        # everything after the command is the args JSON (may contain spaces)
+        extra = " ".join(args[3:]) if len(args) > 3 else ""
+        task_args = {}
+        if extra:
+            try:
+                task_args = json.loads(extra)
+            except json.JSONDecodeError as e:
+                print_err(f"bad args JSON: {e}")
+                print_err(f"got: {extra!r}")
+                return 2
+        tid = t.queue(bot_id, command, task_args)
         print_ok(f"queued {tid}")
         return 0
     print_err("usage: redsky botnet tasks <queued|recent|stats|queue>")
