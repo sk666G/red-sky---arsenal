@@ -13,6 +13,8 @@ SUB = {
     "exploit_match":  "exploit_match",
     "cve":            "exploit_match",
     "update-cve":     "exploit_match",
+    "exploit_finder": "exploit_finder",
+    "finder":         "exploit_finder",
     "deface":         "defacer",
 }
 
