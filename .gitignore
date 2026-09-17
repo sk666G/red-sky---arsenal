@@ -38,3 +38,11 @@ Data/secrets.json
 Data/*.key
 .env
 Data/cve_db.json
+
+# Runtime state — regenerated on first run
+Data/botnet.sqlite
+Data/botnet.sqlite-journal
+Data/panel_auth.json
+Data/cve_db.json
+Data/geoip_cache.json
+Output/build/
