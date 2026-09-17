@@ -62,7 +62,7 @@ MODULES = {
     "fiber_tap":     ("Program.fiber_tap.analyze","run_cli","optical tap analysis"),
     "lock_bypass":   ("Program.lock_bypass.guide","run_cli","physical lock bypass"),
     "memory_forensics":("Program.memory_forensics.dump","run_cli","live memory acquisition"),
-    "ddos":          ("Program.ddos.simulator",  "run_cli", "load-test simulator (gated)"),
+    "ddos":          ("Program.ddos.dispatch",  "run_cli", "load-test simulator (gated)"),
 }
 
 
