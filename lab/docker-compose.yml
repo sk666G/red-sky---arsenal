@@ -1,0 +1,74 @@
+# language: YAML, file: docker-compose.yml, target: Red Sky practice range
+# Vulnerable targets for testing every module. Never expose this to the internet.
+#   docker compose up -d
+#   docker compose down -v
+
+services:
+
+  dvwa:
+    image: vulnerables/web-dvwa:latest
+    container_name: rs-dvwa
+    ports:
+      - "127.0.0.1:8081:80"
+    restart: unless-stopped
+    networks: [rs-lab]
+
+  juice-shop:
+    image: bkimminich/juice-shop:latest
+    container_name: rs-juice
+    ports:
+      - "127.0.0.1:8082:3000"
+    restart: unless-stopped
+    networks: [rs-lab]
+
+  webgoat:
+    image: webgoat/webgoat:latest
+    container_name: rs-webgoat
+    ports:
+      - "127.0.0.1:8083:8080"
+      - "127.0.0.1:9090:9090"
+    restart: unless-stopped
+    networks: [rs-lab]
+
+  mutillidae:
+    image: citizenstig/nowasp:latest
+    container_name: rs-mutillidae
+    ports:
+      - "127.0.0.1:8084:80"
+    restart: unless-stopped
+    networks: [rs-lab]
+
+  vuln-node:
+    image: node:20-alpine
+    container_name: rs-node
+    working_dir: /app
+    volumes:
+      - ./targets/vuln-node:/app
+    command: sh -c "npm install --silent && node server.js"
+    ports:
+      - "127.0.0.1:8085:3000"
+    restart: unless-stopped
+    networks: [rs-lab]
+
+  redis-unauth:
+    image: redis:7-alpine
+    container_name: rs-redis
+    ports:
+      - "127.0.0.1:6379:6379"
+    restart: unless-stopped
+    networks: [rs-lab]
+
+  mysql-weak:
+    image: mysql:8
+    container_name: rs-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: test
+    ports:
+      - "127.0.0.1:3307:3306"
+    restart: unless-stopped
+    networks: [rs-lab]
+
+networks:
+  rs-lab:
+    driver: bridge
