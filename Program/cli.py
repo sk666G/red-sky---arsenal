@@ -39,7 +39,7 @@ MODULES = {
     "bluetooth":     ("Program.bluetooth.dispatch",  "run_cli", "BLE scan + service dump"),
     "rfid":          ("Program.rfid.dispatch",     "run_cli", "NFC / Mifare / HID read+clone"),
     "usb":           ("Program.usb.dispatch",      "run_cli", "BadUSB / Rubber Ducky builder"),
-    "social":        ("Program.social.profile",  "run_cli", "OSINT person profile"),
+    "social":        ("Program.social.dispatch",  "run_cli", "OSINT person profile"),
     "osint_face":    ("Program.osint_face.search","run_cli","face search + reverse image"),
     "mail_trace":    ("Program.mail_trace.header","run_cli","email header + SPF/DKIM recon"),
     "ad_attack":     ("Program.ad_attack.bloodhound","run_cli","AD attack chain"),
