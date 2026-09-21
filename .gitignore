@@ -56,3 +56,4 @@ Data/geoip_cache.json
 Output/build/
 Data/authorized_targets.json
 Data/edb_db.json
+Data/insightface/
