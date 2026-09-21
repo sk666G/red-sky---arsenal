@@ -42,7 +42,7 @@ MODULES = {
     "social":        ("Program.social.dispatch",  "run_cli", "OSINT person profile"),
     "osint_face":    ("Program.osint_face.dispatch","run_cli","face search + reverse image"),
     "mail_trace":    ("Program.mail_trace.dispatch","run_cli","email header + SPF/DKIM recon"),
-    "ad_attack":     ("Program.ad_attack.bloodhound","run_cli","AD attack chain"),
+    "ad_attack":     ("Program.ad_attack.dispatch","run_cli","AD attack chain"),
     "cloud_pwn":     ("Program.cloud_pwn.aws",   "run_cli", "AWS / Azure / GCP attack chain"),
     "container_escape":("Program.container_escape.docker","run_cli","container escape"),
     "supply_chain":  ("Program.supply_chain.typosquat","run_cli","supply chain attacks"),
