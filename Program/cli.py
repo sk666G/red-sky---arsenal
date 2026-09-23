@@ -47,6 +47,7 @@ MODULES = {
     "ics":           ("Program.ics.dispatch","run_cli","ICS/SCADA attack kit"),
     "macro":         ("Program.macro.dispatch","run_cli","Office macro kit"),
     "browser":       ("Program.browser.dispatch","run_cli","browser attack kit"),
+    "vm_detect":     ("Program.vm_detect.dispatch","run_cli","remote VM fingerprint"),
     "report":        ("Program.report.dispatch","run_cli","report kit"),
     "cron":          ("Program.cron.dispatch","run_cli","cron kit"),
     "ai_agent":      ("Program.ai_agent.dispatch","run_cli","autonomous agent"),
