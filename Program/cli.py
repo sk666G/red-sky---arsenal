@@ -43,6 +43,7 @@ MODULES = {
     "evasion":       ("Program.evasion.dispatch","run_cli","AV/EDR evasion kit"),
     "crypto_malware":("Program.crypto_malware.dispatch","run_cli","ransomware kit"),
     "dns":           ("Program.dns.dispatch","run_cli","DNS attack kit"),
+    "tor":           ("Program.tor.dispatch","run_cli","Tor attack kit"),
     "osint_face":    ("Program.osint_face.dispatch","run_cli","face search + reverse image"),
     "mail_trace":    ("Program.mail_trace.dispatch","run_cli","email header + SPF/DKIM recon"),
     "ad_attack":     ("Program.ad_attack.dispatch","run_cli","AD attack chain"),
