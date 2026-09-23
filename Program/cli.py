@@ -45,6 +45,7 @@ MODULES = {
     "dns":           ("Program.dns.dispatch","run_cli","DNS attack kit"),
     "tor":           ("Program.tor.dispatch","run_cli","Tor attack kit"),
     "ics":           ("Program.ics.dispatch","run_cli","ICS/SCADA attack kit"),
+    "macro":         ("Program.macro.dispatch","run_cli","Office macro kit"),
     "osint_face":    ("Program.osint_face.dispatch","run_cli","face search + reverse image"),
     "mail_trace":    ("Program.mail_trace.dispatch","run_cli","email header + SPF/DKIM recon"),
     "ad_attack":     ("Program.ad_attack.dispatch","run_cli","AD attack chain"),
