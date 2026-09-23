@@ -47,6 +47,7 @@ MODULES = {
     "ics":           ("Program.ics.dispatch","run_cli","ICS/SCADA attack kit"),
     "macro":         ("Program.macro.dispatch","run_cli","Office macro kit"),
     "browser":       ("Program.browser.dispatch","run_cli","browser attack kit"),
+    "ics_scada":     ("Program.ics_scada.dispatch","run_cli","EtherNet/IP, Profinet, BACnet, OPC-UA"),
     "firmware":      ("Program.firmware.dispatch","run_cli","firmware unpack + UEFI/squashfs/cve"),
     "satcom":        ("Program.satcom.dispatch","run_cli","SATCOM reference + look angles"),
     "burp_suite":    ("Program.burp_suite.dispatch","run_cli","Burp launcher + extension scaffolds"),
