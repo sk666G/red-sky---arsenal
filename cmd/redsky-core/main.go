@@ -89,7 +89,7 @@ func main() {
 		return
 	}
 
-	p := tea.NewProgram(tui.New(mgr), tea.WithAltScreen())
+	p := tea.NewProgram(tui.New(mgr, *eng, *port), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		log.Fatalf("tui: %v", err)
 	}
