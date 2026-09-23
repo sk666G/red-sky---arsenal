@@ -45,7 +45,7 @@ MODULES = {
     "ad_attack":     ("Program.ad_attack.dispatch","run_cli","AD attack chain"),
     "cloud_pwn":     ("Program.cloud_pwn.dispatch",   "run_cli", "AWS / Azure / GCP attack chain"),
     "container_escape":("Program.container_escape.dispatch","run_cli","container escape"),
-    "supply_chain":  ("Program.supply_chain.typosquat","run_cli","supply chain attacks"),
+    "supply_chain":  ("Program.supply_chain.dispatch","run_cli","supply chain attacks"),
     "firmware":      ("Program.firmware.extract","run_cli","firmware extraction + analysis"),
     "satcom":        ("Program.satcom.recon",    "run_cli", "satellite / GPS recon"),
     "ics_scada":     ("Program.ics_scada.scan",  "run_cli", "Modbus / DNP3 / BACnet / S7"),
