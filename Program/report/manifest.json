@@ -1,0 +1,10 @@
+{
+  "name": "report",
+  "side": "local",
+  "description": "findings collection + report rendering",
+  "commands": [
+    {"name": "findings", "help": "findings <add|import|list|stats|score|dedupe> [opts]"},
+    {"name": "deliverable", "help": "deliverable <markdown|html|docx> [opts]"},
+    {"name": "exec", "help": "exec <generate|show> [--client X] [--engagement Y]"}
+  ]
+}
