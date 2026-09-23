@@ -47,6 +47,7 @@ MODULES = {
     "ics":           ("Program.ics.dispatch","run_cli","ICS/SCADA attack kit"),
     "macro":         ("Program.macro.dispatch","run_cli","Office macro kit"),
     "browser":       ("Program.browser.dispatch","run_cli","browser attack kit"),
+    "proxy_chain":   ("Program.proxy_chain.dispatch","run_cli","proxy pool + proxychains config"),
     "drone":         ("Program.drone.dispatch","run_cli","MAVLink drone recon + cmd injection"),
     "wireless_jam":  ("Program.wireless_jam.dispatch","run_cli","802.11 interference"),
     "lock_bypass":   ("Program.lock_bypass.dispatch","run_cli","interactive lock worksheet"),
