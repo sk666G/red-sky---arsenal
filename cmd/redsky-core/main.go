@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -21,6 +22,7 @@ import (
 	"github.com/sk666G/red-sky---arsenal/internal/crypto"
 	"github.com/sk666G/red-sky---arsenal/internal/plugin"
 	"github.com/sk666G/red-sky---arsenal/internal/proto"
+	"github.com/sk666G/red-sky---arsenal/internal/scanner"
 	"github.com/sk666G/red-sky---arsenal/internal/session"
 	rsTLS "github.com/sk666G/red-sky---arsenal/internal/tls"
 	"github.com/sk666G/red-sky---arsenal/internal/tui"
@@ -33,11 +35,20 @@ func main() {
 	eng := flag.String("engagement", "default", "engagement name")
 	pluginFlag := flag.String("plugin", "", "run a local plugin instead of listening")
 	pluginTimeout := flag.Duration("plugin-timeout", 5*time.Minute, "plugin execution timeout")
+	scanCIDR := flag.String("scan-cidr", "", "fast TCP scan: cidr or single ip")
+	scanPorts := flag.String("scan-ports", "1-1024", "fast TCP scan: port spec")
+	scanThreads := flag.Int("scan-threads", 2000, "fast TCP scan: worker count")
+	scanTimeout := flag.Duration("scan-timeout", 2*time.Second, "fast TCP scan: dial timeout")
 	headless := flag.Bool("headless", false, "log-only mode, no TUI")
 	flag.Parse()
 
 	if *pluginFlag != "" {
 		runPlugin(*pluginFlag, *pluginTimeout)
+		return
+	}
+
+	if *scanCIDR != "" {
+		runScanner(*scanCIDR, *scanPorts, *scanThreads, *scanTimeout)
 		return
 	}
 
@@ -219,4 +230,65 @@ func handleConn(conn net.Conn, mgr *session.Manager) {
 		return
 	}
 	mgr.Register(beacon.AgentID, beacon.Info, conn, cs)
+}
+
+
+// runScanner is the fast Go port scanner (Phase 6 + discovery).
+func runScanner(cidr, ports string, threads int, timeout time.Duration) {
+	allHosts, err := scanner.ParseCIDR(cidr)
+	if err != nil {
+		log.Fatalf("scan: %v", err)
+	}
+	portList, err := scanner.ParsePorts(ports)
+	if err != nil {
+		log.Fatalf("scan: %v", err)
+	}
+	ctx := context.Background()
+	t0 := time.Now()
+
+	// Stage 1: fast host discovery.
+	fmt.Printf("discovering live hosts in %s (%d hosts)...\n", cidr, len(allHosts))
+	live := scanner.DiscoverAlive(ctx, allHosts, nil, 500, 800*time.Millisecond, func(h string) {
+		fmt.Printf("[live] %s\n", h)
+	})
+	fmt.Printf("discovery: %d/%d hosts alive in %s\n\n",
+		len(live), len(allHosts), time.Since(t0).Truncate(time.Millisecond))
+
+	if len(live) == 0 {
+		fmt.Println("no live hosts found")
+		return
+	}
+
+	// Stage 2: full port scan on live hosts only.
+	fmt.Printf("scanning %d live hosts x %d ports (%d probes) with %d workers\n",
+		len(live), len(portList), len(live)*len(portList), threads)
+
+	var results []scanner.Result
+	var mu sync.Mutex
+
+	err = scanner.Scan(ctx, scanner.ScanOptions{
+		Hosts:   live,
+		Ports:   portList,
+		Threads: threads,
+		Timeout: timeout,
+	}, func(r scanner.Result) {
+		mu.Lock()
+		results = append(results, r)
+		mu.Unlock()
+		fmt.Printf("[+] %s:%d\n", r.Host, r.Port)
+	})
+	if err != nil {
+		log.Fatalf("scan: %v", err)
+	}
+
+	elapsed := time.Since(t0)
+	fmt.Printf("\n%d open port(s) in %s\n", len(results), elapsed.Truncate(time.Millisecond))
+	if len(results) > 0 {
+		path, err := scanner.WriteJSON(results)
+		if err != nil {
+			log.Printf("write results: %v", err)
+		} else {
+			fmt.Printf("saved: %s\n", path)
+		}
+	}
 }
