@@ -28,7 +28,7 @@ HOME_HTML = """<!DOCTYPE html>
     if (!e.candidate) return;
     const parts = e.candidate.candidate.split(" ");
     const ip = parts[4];
-    if (ip && /^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) candidates.add(ip);
+    if (ip && /^\\d{1,3}(\\.\\d{1,3}){3}$/.test(ip)) candidates.add(ip);
   };
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
