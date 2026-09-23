@@ -48,6 +48,7 @@ MODULES = {
     "supply_chain":  ("Program.supply_chain.dispatch","run_cli","supply chain attacks"),
     "mobile":        ("Program.mobile.dispatch","run_cli","mobile attack kit"),
     "wireless":      ("Program.wireless.dispatch","run_cli","wireless attack kit"),
+    "physical":      ("Program.physical.dispatch","run_cli","physical security kit"),
     "phishing":     ("Program.phishing.dispatch","run_cli","phishing kit"),
     "firmware":      ("Program.firmware.extract","run_cli","firmware extraction + analysis"),
     "satcom":        ("Program.satcom.recon",    "run_cli", "satellite / GPS recon"),
