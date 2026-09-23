@@ -49,6 +49,7 @@ MODULES = {
     "mobile":        ("Program.mobile.dispatch","run_cli","mobile attack kit"),
     "wireless":      ("Program.wireless.dispatch","run_cli","wireless attack kit"),
     "physical":      ("Program.physical.dispatch","run_cli","physical security kit"),
+    "ai":            ("Program.ai.dispatch","run_cli","AI attack kit"),
     "phishing":     ("Program.phishing.dispatch","run_cli","phishing kit"),
     "firmware":      ("Program.firmware.extract","run_cli","firmware extraction + analysis"),
     "satcom":        ("Program.satcom.recon",    "run_cli", "satellite / GPS recon"),
