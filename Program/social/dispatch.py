@@ -6,10 +6,15 @@ from Program.utils import print_info, print_err
 
 def _usage():
     print_info("redsky social <sub-command> [args...]")
-    print_info("  profile <email|phone|name|username> [--deep]")
-    print_info("      build an OSINT dossier on a target")
     print_info("")
-    print_info("  --deep also scans every platform for the username")
+    print_info("  osint <username|email|phone|domain|gravatar> <target>")
+    print_info("      handle enumeration, email pivot, phone lookup, domain recon")
+    print_info("")
+    print_info("  profile <build|show|list> [--in dir] [--dossier file]")
+    print_info("      merge osint outputs into a target dossier")
+    print_info("")
+    print_info("  pretext <list|gen> [scenario|all] [--channel C] [--vars 'k=v,k=v']")
+    print_info("      pre-scripted pretexts for email, vishing, LinkedIn, SMS, USB, in-person")
 
 
 def run_cli(args: List[str]) -> int:
@@ -21,11 +26,17 @@ def run_cli(args: List[str]) -> int:
         _usage()
         return 0
 
-    if sub in ("profile", "p"):
-        from .profile import run_cli as _p
-        return int(_p(args[1:]))
+    if sub in ("osint", "recon", "o"):
+        from .osint import run_cli as _f
+        return int(_f(args[1:]))
+    if sub in ("profile", "dossier", "p"):
+        from .profile import run_cli as _f
+        return int(_f(args[1:]))
+    if sub in ("pretext", "pretexts", "pre"):
+        from .pretext import run_cli as _f
+        return int(_f(args[1:]))
 
-    print_err(f"unknown social sub-command: {sub}")
+    print_err("unknown social sub-command: " + sub)
     _usage()
     return 2
 
