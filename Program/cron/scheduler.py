@@ -146,7 +146,7 @@ def cmd_systemd(cmd: str, interval: str, name: str, user_mode: bool,
         return 2
     interval = interval or "10min"
     name = name or "rs-helper"
-    user_mode = True if not user_mode else user_mode  # default to user mode
+    # user_mode already reflects --sys via run_cli
 
     base = Path.home() / ".config/systemd/user" if user_mode else Path("/etc/systemd/system")
     base.mkdir(parents=True, exist_ok=True)
