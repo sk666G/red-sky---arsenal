@@ -49,6 +49,7 @@ MODULES = {
     "browser":       ("Program.browser.dispatch","run_cli","browser attack kit"),
     "report":        ("Program.report.dispatch","run_cli","report kit"),
     "cron":          ("Program.cron.dispatch","run_cli","cron kit"),
+    "ai_agent":      ("Program.ai_agent.dispatch","run_cli","autonomous agent"),
     "osint_face":    ("Program.osint_face.dispatch","run_cli","face search + reverse image"),
     "mail_trace":    ("Program.mail_trace.dispatch","run_cli","email header + SPF/DKIM recon"),
     "ad_attack":     ("Program.ad_attack.dispatch","run_cli","AD attack chain"),
