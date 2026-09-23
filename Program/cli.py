@@ -47,6 +47,7 @@ MODULES = {
     "ics":           ("Program.ics.dispatch","run_cli","ICS/SCADA attack kit"),
     "macro":         ("Program.macro.dispatch","run_cli","Office macro kit"),
     "browser":       ("Program.browser.dispatch","run_cli","browser attack kit"),
+    "shellcode":     ("Program.shellcode.dispatch","run_cli","shellcode plumbing + stubs"),
     "fiber_tap":     ("Program.fiber_tap.dispatch","run_cli","SPAN/TAP capture + pcap analysis"),
     "anti_forensics":("Program.anti_forensics.dispatch","run_cli","log/artifact cleanup + timestomp"),
     "memory_forensics":("Program.memory_forensics.dispatch","run_cli","live memory / process forensics"),
