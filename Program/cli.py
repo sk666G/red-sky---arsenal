@@ -40,6 +40,7 @@ MODULES = {
     "rfid":          ("Program.rfid.dispatch",     "run_cli", "NFC / Mifare / HID read+clone"),
     "usb":           ("Program.usb.dispatch",      "run_cli", "BadUSB / Rubber Ducky builder"),
     "social":        ("Program.social.dispatch",  "run_cli", "OSINT person profile"),
+    "evasion":       ("Program.evasion.dispatch","run_cli","AV/EDR evasion kit"),
     "osint_face":    ("Program.osint_face.dispatch","run_cli","face search + reverse image"),
     "mail_trace":    ("Program.mail_trace.dispatch","run_cli","email header + SPF/DKIM recon"),
     "ad_attack":     ("Program.ad_attack.dispatch","run_cli","AD attack chain"),
