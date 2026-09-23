@@ -48,6 +48,7 @@ MODULES = {
     "macro":         ("Program.macro.dispatch","run_cli","Office macro kit"),
     "browser":       ("Program.browser.dispatch","run_cli","browser attack kit"),
     "report":        ("Program.report.dispatch","run_cli","report kit"),
+    "cron":          ("Program.cron.dispatch","run_cli","cron kit"),
     "osint_face":    ("Program.osint_face.dispatch","run_cli","face search + reverse image"),
     "mail_trace":    ("Program.mail_trace.dispatch","run_cli","email header + SPF/DKIM recon"),
     "ad_attack":     ("Program.ad_attack.dispatch","run_cli","AD attack chain"),
