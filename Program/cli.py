@@ -47,6 +47,7 @@ MODULES = {
     "ics":           ("Program.ics.dispatch","run_cli","ICS/SCADA attack kit"),
     "macro":         ("Program.macro.dispatch","run_cli","Office macro kit"),
     "browser":       ("Program.browser.dispatch","run_cli","browser attack kit"),
+    "lock_bypass":   ("Program.lock_bypass.dispatch","run_cli","interactive lock worksheet"),
     "keygen_factory":("Program.keygen_factory.dispatch","run_cli","license analysis + keygen"),
     "fuzzer":       ("Program.fuzzer.dispatch","run_cli","mutation fuzzer + wrappers"),
     "av_bypass":     ("Program.av_bypass.dispatch","run_cli","on-target AV/EDR detection"),
