@@ -13,6 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/sk666G/red-sky---arsenal/internal/planner"
 	"github.com/sk666G/red-sky---arsenal/internal/session"
 )
 
@@ -93,14 +94,24 @@ type Model struct {
 	width, height int
 	quitting      bool
 	err           error
+
+	planner      planner.Planner
+	planShown    bool
+	pendingPlan  *planner.Plan
+	planError    string
+	pendingGoal  string
 }
 
 // New builds the TUI model bound to a session manager.
-func New(mgr *session.Manager, engagement string, port int) Model {
+func New(mgr *session.Manager, engagement string, port int, pl planner.Planner) Model {
+	if pl == nil {
+		pl = planner.RulePlanner{}
+	}
 	return Model{
 		mgr:        mgr,
 		engagement: engagement,
 		port:       port,
+		planner:    pl,
 		started:    time.Now(),
 		histPos:    -1,
 	}
@@ -134,6 +145,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 	drained:
+		if m.pendingGoal != "" {
+			goal := m.pendingGoal
+			m.pendingGoal = ""
+			return m, m.runPlanner(goal)
+		}
 		// refresh loot every 2 seconds
 		if time.Since(m.lootPulse) > 2*time.Second {
 			m.loot = m.scanLoot()
@@ -141,8 +157,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tick()
 
+	case planMsg:
+		m.showPlan(msg.plan, msg.err)
+		return m, nil
+
 	case tea.KeyMsg:
 		// modals first
+		if m.planShown {
+			return m.planKey(msg)
+		}
 		if m.detailShown {
 			if msg.String() == "esc" || msg.String() == "q" {
 				m.detailShown = false
@@ -259,6 +282,16 @@ func (m *Model) submit() {
 		return
 	}
 
+	if strings.HasPrefix(cmd, ":") {
+		goal := strings.TrimSpace(strings.TrimPrefix(cmd, ":"))
+		if goal == "" {
+			return
+		}
+		m.mgr.Events <- session.Event{TS: time.Now(), Kind: "plan", Text: "planning: " + goal}
+		m.pendingGoal = goal
+		return
+	}
+
 	sess := m.mgr.Sessions()
 	if len(sess) == 0 {
 		m.err = fmt.Errorf("no sessions connected")
@@ -304,6 +337,9 @@ func (m Model) View() string {
 		return crimsonStyle.Render("the sky goes dark.\n")
 	}
 
+	if m.planShown {
+		return m.renderPlanModal()
+	}
 	if m.detailShown {
 		return m.viewDetail()
 	}

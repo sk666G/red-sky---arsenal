@@ -20,6 +20,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/sk666G/red-sky---arsenal/internal/crypto"
+	"github.com/sk666G/red-sky---arsenal/internal/planner"
 	"github.com/sk666G/red-sky---arsenal/internal/plugin"
 	"github.com/sk666G/red-sky---arsenal/internal/proto"
 	"github.com/sk666G/red-sky---arsenal/internal/scanner"
@@ -40,6 +41,8 @@ func main() {
 	scanThreads := flag.Int("scan-threads", 2000, "fast TCP scan: worker count")
 	scanTimeout := flag.Duration("scan-timeout", 2*time.Second, "fast TCP scan: dial timeout")
 	headless := flag.Bool("headless", false, "log-only mode, no TUI")
+	noLLM := flag.Bool("no-llm", false, "use rule-based planner instead of Ollama")
+	llmModel := flag.String("llm-model", "huihui_ai/qwen2.5-abliterate:14b", "Ollama model for planning")
 	flag.Parse()
 
 	if *pluginFlag != "" {
@@ -89,7 +92,11 @@ func main() {
 		return
 	}
 
-	p := tea.NewProgram(tui.New(mgr, *eng, *port), tea.WithAltScreen())
+	pl := planner.NewOllama("", *llmModel)
+	if *noLLM {
+		pl = nil // falls back to rule planner
+	}
+	p := tea.NewProgram(tui.New(mgr, *eng, *port, pl), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		log.Fatalf("tui: %v", err)
 	}
