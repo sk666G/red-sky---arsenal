@@ -158,7 +158,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tick()
 
 	case planMsg:
-		fmt.Fprintln(os.Stderr, "DEBUG planMsg received")
 		m.showPlan(msg.plan, msg.err)
 		return m, nil
 
