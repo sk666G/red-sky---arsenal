@@ -25,7 +25,7 @@ type planMsg struct {
 func (m *Model) runPlanner(goal string) tea.Cmd {
 	p := m.planner
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 		defer cancel()
 		plan, err := p.Plan(ctx, goal)
 		return planMsg{plan: plan, err: err}

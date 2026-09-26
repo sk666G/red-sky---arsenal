@@ -50,12 +50,13 @@ func (o *OllamaPlanner) Plan(ctx context.Context, goal string) (*Plan, error) {
 		Format: "json",
 		Options: map[string]any{
 			"temperature": 0.2,
-			"num_predict": 512,
+			"num_predict": 256,
+			"num_ctx":     2048,
 		},
 	}
 	raw, _ := json.Marshal(body)
 
-	cctx, cancel := context.WithTimeout(ctx, 120*time.Second)
+	cctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(cctx, "POST", o.Host+"/api/generate", bytes.NewReader(raw))
