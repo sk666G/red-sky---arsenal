@@ -57,3 +57,10 @@ Output/build/
 Data/authorized_targets.json
 Data/edb_db.json
 Data/insightface/
+
+# Go build artifacts
+bin/
+dist/
+planner-test
+redsky-core
+redsky-agent
