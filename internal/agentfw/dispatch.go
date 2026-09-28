@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/sk666G/red-sky---arsenal/internal/icsdiscover"
 	"github.com/sk666G/red-sky---arsenal/internal/iotdiscover"
 	"github.com/sk666G/red-sky---arsenal/internal/scanner"
 )
@@ -29,6 +30,8 @@ func Dispatch(ctx context.Context, module string, args []string) Result {
 		return runNetScanner(ctx, args)
 	case "iot":
 		return runIoTDiscover(ctx, args)
+	case "ics_scada":
+		return runICSDiscover(ctx, args)
 	default:
 		return Result{
 			Err:      fmt.Errorf("framework module not implemented on agent: %s", module),
@@ -118,6 +121,36 @@ func runIoTDiscover(ctx context.Context, args []string) Result {
 			fmt.Fprintf(&b, "  signals=%s", strings.Join(d.Signals, ","))
 		}
 		b.WriteString("\n")
+	}
+	return Result{Output: b.String(), ExitCode: 0}
+}
+
+
+func runICSDiscover(ctx context.Context, args []string) Result {
+	// args: ["scan", "cidr"] or empty
+	var hosts []string
+	if len(args) >= 2 && args[0] == "scan" {
+		if h, err := scanner.ParseCIDR(args[1]); err == nil {
+			hosts = h
+		}
+	}
+	if len(hosts) == 0 {
+		return Result{Err: fmt.Errorf("ics_scada needs a cidr: ics_scada scan 10.0.0.0/24"), ExitCode: 2}
+	}
+	devices := icsdiscover.Scan(ctx, icsdiscover.Options{
+		Hosts:   hosts,
+		Timeout: 2 * time.Second,
+	})
+	var b strings.Builder
+	fmt.Fprintf(&b, "ics_scada scan %s -> %d device(s)\n", args[1], len(devices))
+	for _, d := range devices {
+		fmt.Fprintf(&b, "  %s  protocols=%s\n", d.IP, strings.Join(d.Protocols, ","))
+		for _, det := range d.Details {
+			fmt.Fprintf(&b, "      %s\n", det)
+		}
+	}
+	if len(devices) == 0 {
+		b.WriteString("  (no ICS devices found)\n")
 	}
 	return Result{Output: b.String(), ExitCode: 0}
 }
