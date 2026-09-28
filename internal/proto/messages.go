@@ -53,8 +53,13 @@ type Beacon struct {
 }
 
 // Task is a command the core wants the agent to run.
+//
+// Kind distinguishes how the agent should handle it:
+//   "shell"     — exec.Command(Cmd, Args...)
+//   "framework" — dispatch to an internal Go function named Cmd with Args
 type Task struct {
 	ID      string   `json:"id"`
+	Kind    string   `json:"kind,omitempty"`
 	Cmd     string   `json:"cmd"`
 	Args    []string `json:"args"`
 	Timeout int      `json:"timeout"`

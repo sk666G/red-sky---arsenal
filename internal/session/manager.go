@@ -29,6 +29,7 @@ const (
 // Task is a command with tracked state.
 type Task struct {
 	ID        string
+	Kind      string // "shell" (default) or "framework"
 	Cmd       string
 	Args      []string
 	Timeout   int
@@ -56,9 +57,18 @@ type Session struct {
 
 // Send enqueues a task for the agent.
 func (s *Session) Send(cmd string, args []string, timeout int) *Task {
+	return s.SendKind("shell", cmd, args, timeout)
+}
+
+// SendKind enqueues a task with an explicit Kind.
+func (s *Session) SendKind(kind, cmd string, args []string, timeout int) *Task {
+	if kind == "" {
+		kind = "shell"
+	}
 	id := fmt.Sprintf("t-%d", time.Now().UnixNano())
 	t := &Task{
 		ID:       id,
+		Kind:     kind,
 		Cmd:      cmd,
 		Args:     args,
 		Timeout:  timeout,
@@ -185,7 +195,7 @@ func (s *Session) close() {
 func (m *Manager) writerLoop(s *Session) {
 	for t := range s.write {
 		payload, err := json.Marshal(proto.Task{
-			ID: t.ID, Cmd: t.Cmd, Args: t.Args, Timeout: t.Timeout,
+			ID: t.ID, Kind: t.Kind, Cmd: t.Cmd, Args: t.Args, Timeout: t.Timeout,
 		})
 		if err != nil {
 			m.emit("error", s.AgentID, "marshal task: "+err.Error())

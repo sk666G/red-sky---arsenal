@@ -60,13 +60,9 @@ func (m *Model) executePlan() int {
 	target := sess[m.selected]
 	n := 0
 	for _, step := range m.pendingPlan.Steps {
-		// Framework-native modules go through the local plugin bridge; shell
-		// commands go to the agent. For Phase 8 we route framework modules
-		// through the agent as `redsky <module> <args>` shell calls, because
-		// remote plugin execution is Phase 4.
-		cmd := "redsky"
-		args := append([]string{step.Module}, step.Args...)
-		target.Send(cmd, args, 300)
+		// Plan steps name a framework module (net_scanner, ics_scada, iot, ...).
+		// The agent dispatches these natively — no shell, no external binary.
+		target.SendKind("framework", step.Module, step.Args, 300)
 		n++
 		m.mgr.Events <- session.Event{
 			TS:      time.Now(),

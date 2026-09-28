@@ -207,8 +207,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursorDown()
 		case "enter":
 			if m.focus == paneSessions {
-				// move to prompt
-				m.focus = panePrompt
+				// if we already have text, send it; otherwise just move focus
+				if strings.TrimSpace(m.input) != "" {
+					m.submit()
+				} else {
+					m.focus = panePrompt
+				}
 			} else if m.focus == paneTasks {
 				// show task detail
 				sess := m.mgr.Sessions()
@@ -227,9 +231,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.input = m.input[:len(m.input)-1]
 			}
 		default:
-			// printable char
-			if msg.Type == tea.KeyRunes {
+			// any printable rune or paste goes into the input buffer,
+			// regardless of which pane has focus
+			if msg.Type == tea.KeyRunes || msg.Paste {
 				m.input += string(msg.Runes)
+				m.focus = panePrompt
 			}
 		}
 	}
@@ -273,9 +279,10 @@ func (m *Model) submit() {
 	if cmd == "" {
 		return
 	}
+	// clear input before dispatch so a queued key cannot re-submit
+	m.input = ""
 	m.inputHist = append(m.inputHist, cmd)
 	m.histPos = -1
-	m.input = ""
 
 	if cmd == "help" {
 		m.helpShown = true
@@ -493,10 +500,29 @@ func (m Model) renderEvents(w, h int) string {
 }
 
 func (m Model) renderPrompt(w int) string {
+	prefix := "redsky> "
 	cursor := "█"
-	p := promptStyle.Render("redsky> ") + m.input + cursor
+	// Reserve one column for the cursor so the trailing block always has a home.
+	max := w - len(prefix) - len(cursor) - 2
+	if max < 8 {
+		max = 8
+	}
+	in := m.input
+	if len(in) > max {
+		// keep the tail; prefix an ellipsis so the operator knows it's clipped
+		in = "…" + in[len(in)-max+1:]
+	}
+	p := promptStyle.Render(prefix) + in + cursor
 	if m.err != nil {
-		p += "  " + errStyle.Render(m.err.Error())
+		// truncate the error to fit the remaining width
+		avail := w - len(prefix) - len(in) - len(cursor) - 4
+		msg := m.err.Error()
+		if avail > 0 && len(msg) > avail {
+			msg = msg[:avail]
+		}
+		if avail > 0 {
+			p += "  " + errStyle.Render(msg)
+		}
 	}
 	return p
 }
