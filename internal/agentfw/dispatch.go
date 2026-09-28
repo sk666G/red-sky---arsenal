@@ -6,10 +6,12 @@ package agentfw
 
 import (
 	"context"
+	"strings"
 	"fmt"
 	"strconv"
 	"time"
 
+	"github.com/sk666G/red-sky---arsenal/internal/iotdiscover"
 	"github.com/sk666G/red-sky---arsenal/internal/scanner"
 )
 
@@ -25,6 +27,8 @@ func Dispatch(ctx context.Context, module string, args []string) Result {
 	switch module {
 	case "net_scanner":
 		return runNetScanner(ctx, args)
+	case "iot":
+		return runIoTDiscover(ctx, args)
 	default:
 		return Result{
 			Err:      fmt.Errorf("framework module not implemented on agent: %s", module),
@@ -84,4 +88,36 @@ func runNetScanner(ctx context.Context, args []string) Result {
 		out += "(no open ports)\n"
 	}
 	return Result{Output: out}
+}
+
+
+func runIoTDiscover(ctx context.Context, args []string) Result {
+	// args is either empty (multicast only) or ["scan" "cidr"]
+	var hosts []string
+	if len(args) >= 2 && args[0] == "scan" {
+		// derive hosts from the cidr
+		if h, err := scanner.ParseCIDR(args[1]); err == nil {
+			hosts = h
+		}
+	}
+	devices := iotdiscover.Scan(ctx, iotdiscover.Options{
+		Hosts:   hosts,
+		Timeout: 3 * time.Second,
+	})
+	var b strings.Builder
+	fmt.Fprintf(&b, "iot discover -> %d device(s)\n", len(devices))
+	for _, d := range devices {
+		fmt.Fprintf(&b, "  %s", d.IP)
+		if d.Vendor != "" {
+			fmt.Fprintf(&b, "  vendor=%s", d.Vendor)
+		}
+		if d.MAC != "" {
+			fmt.Fprintf(&b, "  mac=%s", d.MAC)
+		}
+		if len(d.Signals) > 0 {
+			fmt.Fprintf(&b, "  signals=%s", strings.Join(d.Signals, ","))
+		}
+		b.WriteString("\n")
+	}
+	return Result{Output: b.String(), ExitCode: 0}
 }
