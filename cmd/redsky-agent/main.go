@@ -853,6 +853,10 @@ func runIcs(conn net.Conn, sess *crypto.Session, ic proto.IcsStart) {
 		runIcsS7(ctx, ic, send)
 	case "dnp3":
 		runIcsDNP3(ctx, ic, send)
+	case "bacnet":
+		runIcsBACnet(ctx, ic, send)
+	case "enip":
+		runIcsENIP(ctx, ic, send)
 	default:
 		send("error", "unknown protocol: "+ic.Protocol, "", false, true)
 		return
@@ -1285,4 +1289,92 @@ func runSocial(conn net.Conn, sess *crypto.Session, s proto.SocialStart) {
 		return
 	}
 	send("done", "", "", true, true)
+}
+
+// runIcsBACnet handles BACnet/IP operations: scan (Who-Is broadcast),
+// read (ReadProperty), write (WriteProperty).
+func runIcsBACnet(ctx context.Context, ic proto.IcsStart, send func(string, string, string, bool, bool)) {
+	opts := icsgo.BACnetOptions{Host: ic.Host, Port: ic.Port}
+	switch ic.Action {
+	case "scan":
+		results, err := icsgo.WhoIsScan(opts, 0, 0xFFFF)
+		if err != nil {
+			send("scan", "bacnet who-is error", err.Error(), false, false)
+			return
+		}
+		for _, d := range results {
+			send("scan", fmt.Sprintf("device %d", d.DeviceInstance), d.Addr+" vendor="+fmt.Sprint(d.VendorID), true, false)
+		}
+		if len(results) == 0 {
+			send("scan", "no devices responded", "", false, false)
+		}
+	case "read":
+		raw, err := icsgo.ReadPropertyValue(opts, ic.ObjType, ic.ObjInstance, ic.PropertyID)
+		if err != nil {
+			send("read", "bacnet read error", err.Error(), false, false)
+			return
+		}
+		send("read", "read response", fmt.Sprintf("%x", raw), true, false)
+	case "write":
+		// RawValue carries the pre-encoded application tag + value
+		addr := ic.Host
+		_ = addr
+		conn, err := icsgo.BACnetWriteRaw(opts, ic.ObjType, ic.ObjInstance, ic.PropertyID, ic.RawValue)
+		if err != nil {
+			send("write", "bacnet write error", err.Error(), false, false)
+			return
+		}
+		send("write", "ok", fmt.Sprintf("%x", conn), true, false)
+	default:
+		send("error", "unknown bacnet action: "+ic.Action, "", false, false)
+	}
+}
+
+// runIcsENIP handles EtherNet/IP operations: identity (ListIdentity),
+// read (CIPReadTag), write (CIPWriteTag).
+func runIcsENIP(ctx context.Context, ic proto.IcsStart, send func(string, string, string, bool, bool)) {
+	opts := icsgo.ENIPOptions{Host: ic.Host, Port: ic.Port}
+	switch ic.Action {
+	case "scan", "identity":
+		ids, err := icsgo.ListIdentity(opts)
+		if err != nil {
+			send("scan", "enip list-identity error", err.Error(), false, false)
+			return
+		}
+		for _, id := range ids {
+			det := fmt.Sprintf("vendor=0x%04x type=0x%04x product=%s", id.VendorID, id.DeviceType, id.ProductName)
+			send("scan", "device", det, true, false)
+		}
+		if len(ids) == 0 {
+			send("scan", "no identity response", "", false, false)
+		}
+	case "read":
+		session, conn, err := icsgo.RegisterSession(opts)
+		if err != nil {
+			send("read", "register session error", err.Error(), false, false)
+			return
+		}
+		defer conn.Close()
+		raw, err := icsgo.CIPReadTag(conn, session, ic.Tag, 5*time.Second)
+		if err != nil {
+			send("read", "cip read error", err.Error(), false, false)
+			return
+		}
+		send("read", "tag="+ic.Tag, fmt.Sprintf("%x", raw), true, false)
+	case "write":
+		session, conn, err := icsgo.RegisterSession(opts)
+		if err != nil {
+			send("write", "register session error", err.Error(), false, false)
+			return
+		}
+		defer conn.Close()
+		raw, err := icsgo.CIPWriteTag(conn, session, ic.Tag, ic.DataType, ic.RawValue, 5*time.Second)
+		if err != nil {
+			send("write", "cip write error", err.Error(), false, false)
+			return
+		}
+		send("write", "ok", fmt.Sprintf("%x", raw), true, false)
+	default:
+		send("error", "unknown enip action: "+ic.Action, "", false, false)
+	}
 }

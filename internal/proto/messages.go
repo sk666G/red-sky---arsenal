@@ -329,6 +329,15 @@ type IcsStart struct {
 	Dest  uint16 `json:"dest"`
 	Src   uint16 `json:"src"`
 	Class uint8  `json:"class"`
+	// BACnet
+	ObjType     uint16 `json:"obj_type,omitempty"`
+	ObjInstance uint32 `json:"obj_instance,omitempty"`
+	PropertyID  uint16 `json:"property_id,omitempty"`
+
+	// EtherNet/IP
+	Tag      string `json:"tag,omitempty"`
+	DataType byte   `json:"data_type,omitempty"`
+	RawValue []byte `json:"raw_value,omitempty"`
 }
 
 // IcsData streams progress / results back to core.

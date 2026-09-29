@@ -94,6 +94,11 @@ func main() {
 	icsDest := flag.Uint("ics-dest", 1, "dnp3 outstation address")
 	icsSrc := flag.Uint("ics-src", 100, "dnp3 master address")
 	icsClass := flag.Uint("ics-class", 0, "dnp3 class 0..3")
+	icsObjType := flag.Uint("ics-obj-type", 0, "bacnet object type")
+	icsObjInstance := flag.Uint("ics-obj-instance", 0, "bacnet object instance")
+	icsPropertyID := flag.Uint("ics-property", 85, "bacnet property id (85 = present-value)")
+	icsTag := flag.String("ics-tag", "", "enip: tag name")
+	icsDataType := flag.Uint("ics-datatype", 0xC4, "enip: CIP data type (0xC4=REAL, 0xC3=DINT)")
 	cloudAction := flag.String("cloud", "", "cloud action: probe|chain|identity|users|roles|simulate|driver")
 	cloudProvider := flag.String("cloud-provider", "aws", "cloud provider: aws|gcp|azure (for probe)")
 	cloudKey := flag.String("cloud-key", "", "aws access key id")
@@ -370,21 +375,26 @@ func main() {
 			}
 		}
 		go runIcsDispatch(mgr, icsArgs{
-			Host:   host,
-			Port:   port,
-			Proto:  *icsProto,
-			Action: *icsAction,
-			Unit:   uint8(*icsUnit),
-			Func:   byte(*icsFunc),
-			Start:  uint16(*icsStart),
-			Count:  uint16(*icsCount),
-			Value:  uint16(*icsValue),
-			Area:   byte(*icsArea),
-			DB:     uint16(*icsDB),
-			Data:   dataBytes,
-			Dest:   uint16(*icsDest),
-			Src:    uint16(*icsSrc),
-			Class:  uint8(*icsClass),
+			Host:        host,
+			Port:        port,
+			Proto:       *icsProto,
+			Action:      *icsAction,
+			Unit:        uint8(*icsUnit),
+			Func:        byte(*icsFunc),
+			Start:       uint16(*icsStart),
+			Count:       uint16(*icsCount),
+			Value:       uint16(*icsValue),
+			Area:        byte(*icsArea),
+			DB:          uint16(*icsDB),
+			Data:        dataBytes,
+			Dest:        uint16(*icsDest),
+			Src:         uint16(*icsSrc),
+			Class:       uint8(*icsClass),
+			ObjType:     uint16(*icsObjType),
+			ObjInstance: uint32(*icsObjInstance),
+			PropertyID:  uint16(*icsPropertyID),
+			Tag:         *icsTag,
+			DataType:    byte(*icsDataType),
 		})
 	}
 
@@ -888,21 +898,26 @@ func runIoTCredsDispatch(mgr *session.Manager, a iotCredsArgs) {
 
 // icsArgs carries the operator's -ics flags to the dispatcher.
 type icsArgs struct {
-	Host   string
-	Port   int
-	Proto  string
-	Action string
-	Unit   uint8
-	Func   byte
-	Start  uint16
-	Count  uint16
-	Value  uint16
-	Area   byte
-	DB     uint16
-	Data   []byte
-	Dest   uint16
-	Src    uint16
-	Class  uint8
+	Host        string
+	Port        int
+	Proto       string
+	Action      string
+	Unit        uint8
+	Func        byte
+	Start       uint16
+	Count       uint16
+	Value       uint16
+	Area        byte
+	DB          uint16
+	Data        []byte
+	Dest        uint16
+	Src         uint16
+	Class       uint8
+	ObjType     uint16
+	ObjInstance uint32
+	PropertyID  uint16
+	Tag         string
+	DataType    byte
 }
 
 // runIcsDispatch waits for the first agent, then fires an IcsStart over
@@ -917,22 +932,27 @@ func runIcsDispatch(mgr *session.Manager, a icsArgs) {
 	log.Printf("[ics] %s:%d %s/%s -> %s", a.Host, a.Port, a.Proto, a.Action, s.AgentID)
 
 	req := proto.IcsStart{
-		SessionID: sessionID,
-		Protocol:  a.Proto,
-		Host:      a.Host,
-		Port:      a.Port,
-		Action:    a.Action,
-		Unit:      a.Unit,
-		Func:      a.Func,
-		Start:     a.Start,
-		Count:     a.Count,
-		Value:     a.Value,
-		Area:      a.Area,
-		DB:        a.DB,
-		Data:      a.Data,
-		Dest:      a.Dest,
-		Src:       a.Src,
-		Class:     a.Class,
+		SessionID:   sessionID,
+		Protocol:    a.Proto,
+		Host:        a.Host,
+		Port:        a.Port,
+		Action:      a.Action,
+		Unit:        a.Unit,
+		Func:        a.Func,
+		Start:       a.Start,
+		Count:       a.Count,
+		Value:       a.Value,
+		Area:        a.Area,
+		DB:          a.DB,
+		Data:        a.Data,
+		Dest:        a.Dest,
+		Src:         a.Src,
+		Class:       a.Class,
+		ObjType:     a.ObjType,
+		ObjInstance: a.ObjInstance,
+		PropertyID:  a.PropertyID,
+		Tag:         a.Tag,
+		DataType:    a.DataType,
 	}
 	if err := s.SendIcsStart(sessionID, req); err != nil {
 		log.Printf("[ics] start: %v", err)
