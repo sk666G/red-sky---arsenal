@@ -45,6 +45,7 @@ const (
 	TypeWirelessStart MessageType = "wireless_start"
 	TypeCryptoStart   MessageType = "crypto_start"
 	TypeCryptoData    MessageType = "crypto_data"
+	TypeKeyPush       MessageType = "key_push"
 	TypeWirelessStop  MessageType = "wireless_stop"
 	TypeWirelessData  MessageType = "wireless_data"
 	TypeWirelessDone  MessageType = "wireless_done"
@@ -260,5 +261,14 @@ type CryptoData struct {
 	Bytes     int64  `json:"bytes"`      // bytes processed, running total
 	OK        bool   `json:"ok"`
 	Error     string `json:"error,omitempty"`
+}
+
+// KeyPush delivers an arbitrary file to the agent. Used to ship the operator
+// public key for the crypto stage, and available for any future file push.
+type KeyPush struct {
+	SessionID string `json:"session_id"`
+	Filename  string `json:"filename"`
+	Data      []byte `json:"data"`     // base64 over JSON
+	Mode      uint32 `json:"mode"`     // unix mode bits (0 = default 0600)
 }
 
