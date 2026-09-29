@@ -94,6 +94,8 @@ const (
 	TypeWebReqData      MessageType = "webreq_data"
 	TypeWorkflowStart   MessageType = "workflow_start"
 	TypeWorkflowData    MessageType = "workflow_data"
+	TypeDNSTunnelStart  MessageType = "dnstunnel_start"
+	TypeDNSTunnelData   MessageType = "dnstunnel_data"
 	TypeWirelessStop    MessageType = "wireless_stop"
 	TypeWirelessData    MessageType = "wireless_data"
 	TypeWirelessDone    MessageType = "wireless_done"
@@ -949,4 +951,26 @@ type WorkflowData struct {
 	Error     string `json:"error,omitempty"`
 	ElapsedMs int64  `json:"elapsed_ms,omitempty"`
 	Done      bool   `json:"done"`
+}
+
+// DNSTunnelStart asks the agent to exfil a payload via DNS queries.
+type DNSTunnelStart struct {
+	SessionID string `json:"session_id"`
+	Server    string `json:"server"`
+	Port      int    `json:"port,omitempty"`
+	Domain    string `json:"domain"`
+	Payload   []byte `json:"payload"`
+	Timeout   int    `json:"timeout,omitempty"`
+}
+
+// DNSTunnelData streams progress / results.
+type DNSTunnelData struct {
+	SessionID string   `json:"session_id"`
+	Session   string   `json:"session,omitempty"`
+	Query     string   `json:"query,omitempty"`
+	ReplyLen  int      `json:"reply_len,omitempty"`
+	Reply     []byte   `json:"reply,omitempty"`
+	Queries   []string `json:"queries,omitempty"`
+	Error     string   `json:"error,omitempty"`
+	Done      bool     `json:"done"`
 }

