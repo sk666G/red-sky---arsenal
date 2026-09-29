@@ -40,6 +40,13 @@ const (
 	// DNS exfil (agent -> core, over the wire as DNS queries)
 	TypeDNSExfilChunk MessageType = "dns_exfil_chunk"
 	TypeDNSExfilDone  MessageType = "dns_exfil_done"
+
+	// Wireless capture (agent -> core)
+	TypeWirelessStart MessageType = "wireless_start"
+	TypeWirelessStop  MessageType = "wireless_stop"
+	TypeWirelessData  MessageType = "wireless_data"
+	TypeWirelessDone  MessageType = "wireless_done"
+	TypeWirelessFail  MessageType = "wireless_fail"
 )
 
 // Envelope wraps every message. Payload is the raw JSON of the concrete type
@@ -186,4 +193,37 @@ type DNSExfilDone struct {
 	SessionID string `json:"session_id"`
 	Bytes     int64  `json:"bytes"`
 	Chunks    int    `json:"chunks"`
+}
+
+
+// WirelessStart asks the agent to begin an 802.11 capture.
+type WirelessStart struct {
+	SessionID string `json:"session_id"`
+	Iface     string `json:"iface"`
+	Channel   int    `json:"channel,omitempty"`
+}
+
+// WirelessStop ends the capture.
+type WirelessStop struct {
+	SessionID string `json:"session_id"`
+}
+
+// WirelessData carries one chunk of pcapng-format 802.11 frames.
+type WirelessData struct {
+	SessionID string `json:"session_id"`
+	Data      []byte `json:"data"`
+	Count     int    `json:"count"`
+}
+
+// WirelessDone signals a clean end.
+type WirelessDone struct {
+	SessionID string `json:"session_id"`
+	Total     int    `json:"total"`
+	Bytes     int64  `json:"bytes"`
+}
+
+// WirelessFail reports a capture error.
+type WirelessFail struct {
+	SessionID string `json:"session_id"`
+	Error     string `json:"error"`
 }

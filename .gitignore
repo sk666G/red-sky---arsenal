@@ -62,5 +62,5 @@ Data/insightface/
 bin/
 dist/
 planner-test
-redsky-core
-redsky-agent
+/redsky-core
+/redsky-agent
