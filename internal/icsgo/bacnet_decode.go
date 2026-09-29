@@ -54,12 +54,12 @@ type BACnetDecodeResult struct {
 // ReadProperty request. Expected layout (post-BVLC, post-NPDU, post-APDU
 // header, i.e. after the 0x30 invoke-id service-ack bytes):
 //
-//   context 0 (Object Identifier)   — the object being read
-//   context 1 (Property Identifier) — the property being read
-//   [context 2 (Array Index)]       — optional
-//   context 3 (opening tag)         — the value block
-//   <value>
-//   context 3 (closing tag)
+//	context 0 (Object Identifier)   — the object being read
+//	context 1 (Property Identifier) — the property being read
+//	[context 2 (Array Index)]       — optional
+//	context 3 (opening tag)         — the value block
+//	<value>
+//	context 3 (closing tag)
 func DecodeReadPropertyACK(apdu []byte) (BACnetDecodeResult, error) {
 	var res BACnetDecodeResult
 	if len(apdu) < 6 {
@@ -211,14 +211,18 @@ func bacnetDecodeValue(b []byte, off int) (BACnetValue, int, error) {
 		if off+int(low) > len(b) {
 			return BACnetValue{}, 0, errors.New("truncated signed")
 		}
-		var v int64
-		// sign-extend from the first byte
-		b0 := b[off]
-		if b0&0x80 != 0 {
-			v = -1 << (8 * uint(low))
-		}
+		// assemble the raw magnitude, then sign-extend based on the top bit
+		var raw uint64
 		for i := 0; i < int(low); i++ {
-			v = (v << 8) | int64(b[off+i])
+			raw = (raw << 8) | uint64(b[off+i])
+		}
+		bits := uint(low) * 8
+		var v int64
+		if low > 0 && b[off]&0x80 != 0 {
+			// negative — sign-extend by setting all bits above `bits`
+			v = int64(raw) | ^((int64(1) << bits) - 1)
+		} else {
+			v = int64(raw)
 		}
 		return BACnetValue{Type: "signed", Value: v}, 1 + int(low), nil
 
