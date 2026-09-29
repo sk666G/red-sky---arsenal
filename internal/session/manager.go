@@ -617,3 +617,9 @@ func (s *Session) SendAntiForenStart(sessionID string, req proto.AntiForenStart)
 	req.SessionID = sessionID
 	return s.sendTunnelMsg(proto.TypeAntiForenStart, req)
 }
+
+// SendMailTraceStart asks the agent to analyze an email header blob / file.
+func (s *Session) SendMailTraceStart(sessionID string, req proto.MailTraceStart) error {
+	req.SessionID = sessionID
+	return s.sendTunnelMsg(proto.TypeMailTraceStart, req)
+}

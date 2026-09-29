@@ -179,6 +179,7 @@ func main() {
 	antiForen := flag.String("antiforen", "", "anti-forensics: logstop|history|secure_delete|timestamp|all")
 	antiForenPaths := flag.String("antiforen-paths", "", "comma-separated paths (secure_delete / timestamp / all)")
 	antiForenDry := flag.Bool("antiforen-dry", false, "print actions without executing")
+	mailTrace := flag.String("mailtrace", "", "analyze an email: pass .eml path, or @FILE for a raw header blob")
 	pmkidIface := flag.String("pmkid", "", "802.11 PMKID harvest: monitor-mode iface")
 	pmkidChannel := flag.Int("pmkid-channel", 0, "PMKID: set wifi channel before harvest")
 	pmkidDuration := flag.Duration("pmkid-duration", 60*time.Second, "PMKID: total harvest run time")
@@ -603,6 +604,22 @@ func main() {
 			Paths:  paths,
 			DryRun: *antiForenDry,
 		})
+	}
+
+	// mailtrace dispatch — parse email headers on the first agent
+	if *mailTrace != "" {
+		path := *mailTrace
+		blob := ""
+		if strings.HasPrefix(path, "@") {
+			b, err := os.ReadFile(path[1:])
+			if err == nil {
+				blob = string(b)
+				path = ""
+			} else {
+				log.Printf("[mailtrace] read blob: %v", err)
+			}
+		}
+		go runMailTraceDispatch(mgr, mailTraceArgs{Path: path, Blob: blob})
 	}
 
 	if *dnsBind != "" {
@@ -1549,5 +1566,25 @@ func runAntiForenDispatch(mgr *session.Manager, a antiForenArgs) {
 	}
 	if err := s.SendAntiForenStart(sessionID, req); err != nil {
 		log.Printf("[antiforen] start: %v", err)
+	}
+}
+
+// mailTraceArgs carries the operator's -mailtrace flag.
+type mailTraceArgs struct {
+	Path string
+	Blob string
+}
+
+// runMailTraceDispatch waits for the first agent, sends a MailTraceStart.
+func runMailTraceDispatch(mgr *session.Manager, a mailTraceArgs) {
+	for len(mgr.Sessions()) == 0 {
+		time.Sleep(500 * time.Millisecond)
+	}
+	s := mgr.Sessions()[0]
+	sessionID := fmt.Sprintf("mt-%d", time.Now().UnixNano())
+	log.Printf("[mailtrace] path=%q blob=%d bytes -> %s", a.Path, len(a.Blob), s.AgentID)
+	req := proto.MailTraceStart{SessionID: sessionID, Path: a.Path, Blob: a.Blob}
+	if err := s.SendMailTraceStart(sessionID, req); err != nil {
+		log.Printf("[mailtrace] start: %v", err)
 	}
 }

@@ -74,6 +74,8 @@ const (
 	TypeVMDetectData   MessageType = "vmdetect_data"
 	TypeAntiForenStart MessageType = "antiforen_start"
 	TypeAntiForenData  MessageType = "antiforen_data"
+	TypeMailTraceStart MessageType = "mailtrace_start"
+	TypeMailTraceData  MessageType = "mailtrace_data"
 	TypeWirelessStop   MessageType = "wireless_stop"
 	TypeWirelessData   MessageType = "wireless_data"
 	TypeWirelessDone   MessageType = "wireless_done"
@@ -676,4 +678,25 @@ type AntiForenData struct {
 	Results   []string `json:"results,omitempty"` // formatted "action|target|ok|detail"
 	Count     int      `json:"count"`
 	Done      bool     `json:"done"`
+}
+
+// MailTraceStart asks the agent to analyze an email header blob or file.
+type MailTraceStart struct {
+	SessionID string `json:"session_id"`
+	Path      string `json:"path,omitempty"` // .eml file
+	Blob      string `json:"blob,omitempty"` // raw headers as a string
+}
+
+// MailTraceData is the reply.
+type MailTraceData struct {
+	SessionID  string   `json:"session_id"`
+	From       string   `json:"from,omitempty"`
+	ReturnPath string   `json:"return_path,omitempty"`
+	ReplyTo    string   `json:"reply_to,omitempty"`
+	Subject    string   `json:"subject,omitempty"`
+	OriginIP   string   `json:"origin_ip,omitempty"`
+	Hops       []string `json:"hops,omitempty"`
+	Suspects   []string `json:"suspects,omitempty"`
+	Error      string   `json:"error,omitempty"`
+	Done       bool     `json:"done"`
 }

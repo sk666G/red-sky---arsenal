@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -333,6 +334,12 @@ func runSession(host string, port int, agentID, caFP string, beaconSec int) erro
 				continue
 			}
 			go runAntiForen(conn, sess, a)
+		case proto.TypeMailTraceStart:
+			var m proto.MailTraceStart
+			if err := json.Unmarshal(env.Payload, &m); err != nil {
+				continue
+			}
+			go runMailTrace(conn, sess, m)
 		case proto.TypeWirelessStop:
 			var ws proto.WirelessStop
 			if err := json.Unmarshal(env.Payload, &ws); err != nil {
@@ -2040,5 +2047,42 @@ func runAntiForen(conn net.Conn, sess *crypto.Session, a proto.AntiForenStart) {
 		Results:   lines,
 		Count:     len(lines),
 		Done:      true,
+	})
+}
+
+// runMailTrace parses an email header blob or .eml file and streams the
+// analysis back.
+func runMailTrace(conn net.Conn, sess *crypto.Session, m proto.MailTraceStart) {
+	var tr recon2.MailTrace
+	var err error
+	if m.Path != "" {
+		tr, err = recon2.ParseMailFile(m.Path)
+	} else if m.Blob != "" {
+		tr, err = recon2.ReadMailBytes([]byte(m.Blob))
+	} else {
+		err = errors.New("no path or blob")
+	}
+	if err != nil {
+		sendTunnelAck(conn, sess, proto.TypeMailTraceData, proto.MailTraceData{
+			SessionID: m.SessionID,
+			Error:     err.Error(),
+			Done:      true,
+		})
+		return
+	}
+	var hops []string
+	for _, h := range tr.Received {
+		hops = append(hops, fmt.Sprintf("[%d] from=%s by=%s ip=%s when=%s", h.Index, h.From, h.By, h.IP, h.When))
+	}
+	sendTunnelAck(conn, sess, proto.TypeMailTraceData, proto.MailTraceData{
+		SessionID:  m.SessionID,
+		From:       tr.From,
+		ReturnPath: tr.ReturnPath,
+		ReplyTo:    tr.ReplyTo,
+		Subject:    tr.Subject,
+		OriginIP:   tr.OriginIP,
+		Hops:       hops,
+		Suspects:   tr.Suspect,
+		Done:       true,
 	})
 }
