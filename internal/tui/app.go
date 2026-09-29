@@ -247,6 +247,7 @@ func (m *Model) cursorUp() {
 	case paneSessions, panePrompt:
 		if m.selected > 0 {
 			m.selected--
+			m.clampSessCursor()
 		}
 	case paneTasks:
 		if m.sessCursor > 0 {
@@ -262,6 +263,7 @@ func (m *Model) cursorDown() {
 	case paneSessions, panePrompt:
 		if m.selected < len(m.mgr.Sessions())-1 {
 			m.selected++
+			m.clampSessCursor()
 		}
 	case paneTasks:
 		sess := m.mgr.Sessions()
@@ -597,4 +599,23 @@ func (m Model) viewHelp() string {
 		"esc close",
 	}
 	return borderStyle.Width(m.width - 4).Render(strings.Join(help, "\n"))
+}
+
+
+// clampSessCursor keeps sessCursor inside the currently-selected session's
+// task list after the sessions cursor moves.
+func (m *Model) clampSessCursor() {
+	sess := m.mgr.Sessions()
+	if m.selected >= len(sess) {
+		m.sessCursor = 0
+		return
+	}
+	n := len(sess[m.selected].Tasks())
+	if m.sessCursor >= n {
+		if n == 0 {
+			m.sessCursor = 0
+		} else {
+			m.sessCursor = n - 1
+		}
+	}
 }
