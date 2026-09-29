@@ -7,14 +7,14 @@ from Program.utils import print_info, print_err
 def _usage():
     print_info("redsky dns <sub-command> [args...]")
     print_info("")
-    print_info("  tunnel <send|serve|check|decode> [opts]")
-    print_info("      DNS tunnel over TXT/A/NULL/CNAME. base32/base64/hex encodings.")
+    print_info("  tunnel   server | send")
+    print_info("      DNS exfil via TXT/A queries, base32 chunked")
     print_info("")
-    print_info("  rebind <server|http|timings|plan> [opts]")
-    print_info("      DNS rebinding: rotate A records between attacker and target IPs")
+    print_info("  rebind   serve | payload")
+    print_info("      DNS rebinding for SSRF same-origin bypass")
     print_info("")
-    print_info("  poison <snoop|forge|kaminsky> [opts]")
-    print_info("      cache snooping, forged responses, birthday-attack scaffold")
+    print_info("  poison   catalog | info <name> | snoop")
+    print_info("      cache poisoning reference + RD=0 cache snooping")
 
 
 def run_cli(args: List[str]) -> int:
@@ -26,13 +26,13 @@ def run_cli(args: List[str]) -> int:
         _usage()
         return 0
 
-    if sub in ("tunnel", "tun", "t"):
+    if sub in ("tunnel", "t"):
         from .tunnel import run_cli as _f
         return int(_f(args[1:]))
-    if sub in ("rebind", "rb", "r"):
+    if sub in ("rebind", "r"):
         from .rebind import run_cli as _f
         return int(_f(args[1:]))
-    if sub in ("poison", "p"):
+    if sub in ("poison", "p", "cache"):
         from .poison import run_cli as _f
         return int(_f(args[1:]))
 
