@@ -76,6 +76,9 @@ func main() {
 	evilBeacon := flag.Duration("evil-beacon", 100*time.Millisecond, "evil twin: beacon interval")
 	evilDuration := flag.Duration("evil-duration", 60*time.Second, "evil twin: total run time")
 	evilOut := flag.String("evil-out", "", "evil twin: append probe hits to this file")
+	wpa3Iface := flag.String("wpa3", "", "WPA3 observe: monitor-mode iface")
+	wpa3Channel := flag.Int("wpa3-channel", 0, "WPA3: set wifi channel before observe")
+	wpa3Duration := flag.Duration("wpa3-duration", 60*time.Second, "WPA3: total observe run time")
 	flag.Parse()
 
 	if *pluginFlag != "" {
@@ -221,6 +224,31 @@ func main() {
 			}
 			ecancel()
 		}
+	}
+
+	// wpa3 dispatch — SAE observation + transition-mode detection
+	if *wpa3Iface != "" {
+		wctx, wcancel := context.WithTimeout(context.Background(), *wpa3Duration)
+		onSAE := func(h wireless.SAEHit) {
+			kind := "commit"
+			if h.Seq == 2 {
+				kind = "confirm"
+			}
+			log.Printf("[wpa3] sae %s bssid=%s sta=%s group=%d",
+				kind, h.BSSID, h.Station, h.GroupID)
+		}
+		onTransition := func(h wireless.TransitionHit) {
+			log.Printf("[wpa3] transition-mode ap bssid=%s ssid=%q — chain: deauth + pmkid",
+				h.BSSID, h.SSID)
+		}
+		if err := wireless.WPA3(wctx, wireless.WPA3Options{
+			Iface:    *wpa3Iface,
+			Channel:  *wpa3Channel,
+			Duration: *wpa3Duration,
+		}, onSAE, onTransition); err != nil {
+			log.Printf("[wpa3] %v", err)
+		}
+		wcancel()
 	}
 
 	if *dnsBind != "" {
