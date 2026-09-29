@@ -180,6 +180,7 @@ func main() {
 	antiForenPaths := flag.String("antiforen-paths", "", "comma-separated paths (secure_delete / timestamp / all)")
 	antiForenDry := flag.Bool("antiforen-dry", false, "print actions without executing")
 	mailTrace := flag.String("mailtrace", "", "analyze an email: pass .eml path, or @FILE for a raw header blob")
+	geoIP := flag.String("geoip", "", "classify IPs: comma-separated list")
 	pmkidIface := flag.String("pmkid", "", "802.11 PMKID harvest: monitor-mode iface")
 	pmkidChannel := flag.Int("pmkid-channel", 0, "PMKID: set wifi channel before harvest")
 	pmkidDuration := flag.Duration("pmkid-duration", 60*time.Second, "PMKID: total harvest run time")
@@ -620,6 +621,18 @@ func main() {
 			}
 		}
 		go runMailTraceDispatch(mgr, mailTraceArgs{Path: path, Blob: blob})
+	}
+
+	// geoip dispatch — IP classification on the first agent
+	if *geoIP != "" {
+		var ips []string
+		for _, ip := range strings.Split(*geoIP, ",") {
+			ip = strings.TrimSpace(ip)
+			if ip != "" {
+				ips = append(ips, ip)
+			}
+		}
+		go runGeoIPDispatch(mgr, ips)
 	}
 
 	if *dnsBind != "" {
@@ -1586,5 +1599,19 @@ func runMailTraceDispatch(mgr *session.Manager, a mailTraceArgs) {
 	req := proto.MailTraceStart{SessionID: sessionID, Path: a.Path, Blob: a.Blob}
 	if err := s.SendMailTraceStart(sessionID, req); err != nil {
 		log.Printf("[mailtrace] start: %v", err)
+	}
+}
+
+// runGeoIPDispatch waits for the first agent, sends a GeoIPStart.
+func runGeoIPDispatch(mgr *session.Manager, ips []string) {
+	for len(mgr.Sessions()) == 0 {
+		time.Sleep(500 * time.Millisecond)
+	}
+	s := mgr.Sessions()[0]
+	sessionID := fmt.Sprintf("gi-%d", time.Now().UnixNano())
+	log.Printf("[geoip] %d ips -> %s", len(ips), s.AgentID)
+	req := proto.GeoIPStart{SessionID: sessionID, IPs: ips}
+	if err := s.SendGeoIPStart(sessionID, req); err != nil {
+		log.Printf("[geoip] start: %v", err)
 	}
 }

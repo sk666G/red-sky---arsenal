@@ -623,3 +623,9 @@ func (s *Session) SendMailTraceStart(sessionID string, req proto.MailTraceStart)
 	req.SessionID = sessionID
 	return s.sendTunnelMsg(proto.TypeMailTraceStart, req)
 }
+
+// SendGeoIPStart asks the agent to classify IP addresses.
+func (s *Session) SendGeoIPStart(sessionID string, req proto.GeoIPStart) error {
+	req.SessionID = sessionID
+	return s.sendTunnelMsg(proto.TypeGeoIPStart, req)
+}

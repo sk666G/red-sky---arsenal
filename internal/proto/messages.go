@@ -76,6 +76,8 @@ const (
 	TypeAntiForenData  MessageType = "antiforen_data"
 	TypeMailTraceStart MessageType = "mailtrace_start"
 	TypeMailTraceData  MessageType = "mailtrace_data"
+	TypeGeoIPStart     MessageType = "geoip_start"
+	TypeGeoIPData      MessageType = "geoip_data"
 	TypeWirelessStop   MessageType = "wireless_stop"
 	TypeWirelessData   MessageType = "wireless_data"
 	TypeWirelessDone   MessageType = "wireless_done"
@@ -699,4 +701,18 @@ type MailTraceData struct {
 	Suspects   []string `json:"suspects,omitempty"`
 	Error      string   `json:"error,omitempty"`
 	Done       bool     `json:"done"`
+}
+
+// GeoIPStart asks the agent to classify one or more IP addresses.
+type GeoIPStart struct {
+	SessionID string   `json:"session_id"`
+	IPs       []string `json:"ips"`
+}
+
+// GeoIPData streams the classifications back.
+type GeoIPData struct {
+	SessionID string   `json:"session_id"`
+	Results   []string `json:"results,omitempty"` // formatted "ip|family|provider|flags|ptr"
+	Error     string   `json:"error,omitempty"`
+	Done      bool     `json:"done"`
 }
