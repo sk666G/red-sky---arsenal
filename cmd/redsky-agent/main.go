@@ -893,6 +893,8 @@ func runIcs(conn net.Conn, sess *crypto.Session, ic proto.IcsStart) {
 		runIcsBACnet(ctx, ic, send)
 	case "enip":
 		runIcsENIP(ctx, ic, send)
+	case "opcua":
+		runIcsOPCUA(ctx, ic, send)
 	default:
 		send("error", "unknown protocol: "+ic.Protocol, "", false, true)
 		return
@@ -1412,5 +1414,28 @@ func runIcsENIP(ctx context.Context, ic proto.IcsStart, send func(string, string
 		send("write", "ok", fmt.Sprintf("%x", raw), true, false)
 	default:
 		send("error", "unknown enip action: "+ic.Action, "", false, false)
+	}
+}
+
+// runIcsOPCUA handles OPC-UA discovery operations.
+func runIcsOPCUA(ctx context.Context, ic proto.IcsStart, send func(string, string, string, bool, bool)) {
+	opts := icsgo.OPCUAOptions{Host: ic.Host, Port: ic.Port}
+	switch ic.Action {
+	case "scan", "discover", "info":
+		res, err := icsgo.Discover(opts)
+		if err != nil {
+			send("scan", "opcua discover error", err.Error(), false, false)
+			return
+		}
+		send("scan", "endpoint", res.EndpointURL, res.EndpointURL != "", false)
+		for _, p := range res.SecurityPolicies {
+			send("scan", "policy", p, true, false)
+		}
+		for _, t := range res.UserTokenTypes {
+			send("scan", "user-token", t, true, false)
+		}
+		send("scan", "raw-response-bytes", fmt.Sprintf("%d", len(res.RawResponse)), true, false)
+	default:
+		send("error", "unknown opcua action: "+ic.Action, "", false, false)
 	}
 }
