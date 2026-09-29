@@ -2355,6 +2355,29 @@ func runBluetooth(conn net.Conn, sess *crypto.Session, b proto.BluetoothStart) {
 			Paired:  d.Paired,
 			Trusted: d.Trusted,
 		})
+	case "ble_adv":
+		ads, err := rfgo.CaptureAdvertisements(ctx, rfgo.BLEOptions{
+			Duration: time.Duration(b.Duration) * time.Second,
+		})
+		if err != nil {
+			send(proto.BluetoothData{Error: err.Error(), Done: true})
+			return
+		}
+		for _, ad := range ads {
+			send(proto.BluetoothData{
+				Address:     ad.Address,
+				RSSI:        ad.RSSI,
+				AdvName:     ad.Name,
+				AdvFlags:    ad.Flags,
+				AdvTxPower:  ad.TxPower,
+				SvcUUIDs16:  ad.ServiceUUIDs16,
+				SvcUUIDs128: ad.ServiceUUIDs128,
+				MfgID:       ad.ManufacturerID,
+				MfgName:     ad.ManufacturerName,
+				MfgHex:      hexBytes(ad.ManufacturerData),
+			})
+		}
+
 	case "gatt_read":
 		if b.Address == "" || b.GATTUUID == "" {
 			send(proto.BluetoothData{Error: "address and gatt_uuid required", Done: true})

@@ -793,10 +793,18 @@ type BluetoothData struct {
 	Error     string `json:"error,omitempty"`
 	Done      bool   `json:"done"`
 	// GATT enumeration
-	Services []string `json:"services,omitempty"` // formatted "handle|uuid|name"
-	Chars    []string `json:"chars,omitempty"`    // formatted "service_uuid|handle|uuid|flags"
-	GATTHex  string   `json:"gatt_hex,omitempty"`
-	Notifies []string `json:"notifies,omitempty"`
+	Services    []string `json:"services,omitempty"` // formatted "handle|uuid|name"
+	Chars       []string `json:"chars,omitempty"`    // formatted "service_uuid|handle|uuid|flags"
+	GATTHex     string   `json:"gatt_hex,omitempty"`
+	Notifies    []string `json:"notifies,omitempty"`
+	AdvName     string   `json:"adv_name,omitempty"`
+	AdvFlags    uint8    `json:"adv_flags,omitempty"`
+	AdvTxPower  int8     `json:"adv_tx_power,omitempty"`
+	SvcUUIDs16  []string `json:"svc_uuids_16,omitempty"`
+	SvcUUIDs128 []string `json:"svc_uuids_128,omitempty"`
+	MfgID       uint16   `json:"mfg_id,omitempty"`
+	MfgName     string   `json:"mfg_name,omitempty"`
+	MfgHex      string   `json:"mfg_hex,omitempty"`
 }
 
 // DroneStart drives MAVLink operations on the agent.
