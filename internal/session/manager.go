@@ -629,3 +629,9 @@ func (s *Session) SendGeoIPStart(sessionID string, req proto.GeoIPStart) error {
 	req.SessionID = sessionID
 	return s.sendTunnelMsg(proto.TypeGeoIPStart, req)
 }
+
+// SendProxyChainStart asks the agent to dial a SOCKS5 chain.
+func (s *Session) SendProxyChainStart(sessionID string, req proto.ProxyChainStart) error {
+	req.SessionID = sessionID
+	return s.sendTunnelMsg(proto.TypeProxyChainStart, req)
+}

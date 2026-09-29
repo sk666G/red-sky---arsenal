@@ -42,46 +42,48 @@ const (
 	TypeDNSExfilDone  MessageType = "dns_exfil_done"
 
 	// Wireless capture (agent -> core)
-	TypeWirelessStart  MessageType = "wireless_start"
-	TypeCryptoStart    MessageType = "crypto_start"
-	TypeCryptoData     MessageType = "crypto_data"
-	TypeKeyPush        MessageType = "key_push"
-	TypeIoTCredsStart  MessageType = "iotcreds_start"
-	TypeIoTCredsData   MessageType = "iotcreds_data"
-	TypeIcsStart       MessageType = "ics_start"
-	TypeIcsData        MessageType = "ics_data"
-	TypeCloudStart     MessageType = "cloud_start"
-	TypeCloudData      MessageType = "cloud_data"
-	TypeCryptoOpStart  MessageType = "crypto_op_start"
-	TypeCryptoOpData   MessageType = "crypto_op_data"
-	TypeSocialStart    MessageType = "social_start"
-	TypeSocialData     MessageType = "social_data"
-	TypeWebSSRFStart   MessageType = "webssrf_start"
-	TypeWebSSRFData    MessageType = "webssrf_data"
-	TypeWebSSTIStart   MessageType = "webssti_start"
-	TypeWebSSTIData    MessageType = "webssti_data"
-	TypeWebXXEStart    MessageType = "webxxe_start"
-	TypeWebXXEData     MessageType = "webxxe_data"
-	TypeWebXSSStart    MessageType = "webxss_start"
-	TypeWebXSSData     MessageType = "webxss_data"
-	TypeAdEnumStart    MessageType = "adenum_start"
-	TypeAdEnumData     MessageType = "adenum_data"
-	TypeShellcodeStart MessageType = "shellcode_start"
-	TypeShellcodeData  MessageType = "shellcode_data"
-	TypeHostInfoStart  MessageType = "hostinfo_start"
-	TypeHostInfoData   MessageType = "hostinfo_data"
-	TypeVMDetectStart  MessageType = "vmdetect_start"
-	TypeVMDetectData   MessageType = "vmdetect_data"
-	TypeAntiForenStart MessageType = "antiforen_start"
-	TypeAntiForenData  MessageType = "antiforen_data"
-	TypeMailTraceStart MessageType = "mailtrace_start"
-	TypeMailTraceData  MessageType = "mailtrace_data"
-	TypeGeoIPStart     MessageType = "geoip_start"
-	TypeGeoIPData      MessageType = "geoip_data"
-	TypeWirelessStop   MessageType = "wireless_stop"
-	TypeWirelessData   MessageType = "wireless_data"
-	TypeWirelessDone   MessageType = "wireless_done"
-	TypeWirelessFail   MessageType = "wireless_fail"
+	TypeWirelessStart   MessageType = "wireless_start"
+	TypeCryptoStart     MessageType = "crypto_start"
+	TypeCryptoData      MessageType = "crypto_data"
+	TypeKeyPush         MessageType = "key_push"
+	TypeIoTCredsStart   MessageType = "iotcreds_start"
+	TypeIoTCredsData    MessageType = "iotcreds_data"
+	TypeIcsStart        MessageType = "ics_start"
+	TypeIcsData         MessageType = "ics_data"
+	TypeCloudStart      MessageType = "cloud_start"
+	TypeCloudData       MessageType = "cloud_data"
+	TypeCryptoOpStart   MessageType = "crypto_op_start"
+	TypeCryptoOpData    MessageType = "crypto_op_data"
+	TypeSocialStart     MessageType = "social_start"
+	TypeSocialData      MessageType = "social_data"
+	TypeWebSSRFStart    MessageType = "webssrf_start"
+	TypeWebSSRFData     MessageType = "webssrf_data"
+	TypeWebSSTIStart    MessageType = "webssti_start"
+	TypeWebSSTIData     MessageType = "webssti_data"
+	TypeWebXXEStart     MessageType = "webxxe_start"
+	TypeWebXXEData      MessageType = "webxxe_data"
+	TypeWebXSSStart     MessageType = "webxss_start"
+	TypeWebXSSData      MessageType = "webxss_data"
+	TypeAdEnumStart     MessageType = "adenum_start"
+	TypeAdEnumData      MessageType = "adenum_data"
+	TypeShellcodeStart  MessageType = "shellcode_start"
+	TypeShellcodeData   MessageType = "shellcode_data"
+	TypeHostInfoStart   MessageType = "hostinfo_start"
+	TypeHostInfoData    MessageType = "hostinfo_data"
+	TypeVMDetectStart   MessageType = "vmdetect_start"
+	TypeVMDetectData    MessageType = "vmdetect_data"
+	TypeAntiForenStart  MessageType = "antiforen_start"
+	TypeAntiForenData   MessageType = "antiforen_data"
+	TypeMailTraceStart  MessageType = "mailtrace_start"
+	TypeMailTraceData   MessageType = "mailtrace_data"
+	TypeGeoIPStart      MessageType = "geoip_start"
+	TypeGeoIPData       MessageType = "geoip_data"
+	TypeProxyChainStart MessageType = "proxychain_start"
+	TypeProxyChainData  MessageType = "proxychain_data"
+	TypeWirelessStop    MessageType = "wireless_stop"
+	TypeWirelessData    MessageType = "wireless_data"
+	TypeWirelessDone    MessageType = "wireless_done"
+	TypeWirelessFail    MessageType = "wireless_fail"
 )
 
 // Envelope wraps every message. Payload is the raw JSON of the concrete type
@@ -715,4 +717,21 @@ type GeoIPData struct {
 	Results   []string `json:"results,omitempty"` // formatted "ip|family|provider|flags|ptr"
 	Error     string   `json:"error,omitempty"`
 	Done      bool     `json:"done"`
+}
+
+// ProxyChainStart asks the agent to test a SOCKS5 chain.
+type ProxyChainStart struct {
+	SessionID string   `json:"session_id"`
+	Hops      []string `json:"hops"`    // "host:port" entries
+	Target    string   `json:"target"`  // final target host:port, optional
+	Timeout   int      `json:"timeout"` // seconds
+}
+
+// ProxyChainData streams the result back.
+type ProxyChainData struct {
+	SessionID string `json:"session_id"`
+	OK        bool   `json:"ok"`
+	Detail    string `json:"detail,omitempty"`
+	Error     string `json:"error,omitempty"`
+	Done      bool   `json:"done"`
 }
