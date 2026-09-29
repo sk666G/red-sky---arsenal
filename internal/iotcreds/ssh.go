@@ -4,8 +4,9 @@
 // the rest of the package compiles without pulling the dependency.
 //
 // Enable with:
-//   go get golang.org/x/crypto/ssh
-//   go build -tags iotcreds_ssh ./...
+//
+//	go get golang.org/x/crypto/ssh
+//	go build -tags iotcreds_ssh ./...
 //
 // Without the tag, this file is excluded and spraySSH/SSOptions come from
 // ssh_stub.go which returns "unsupported" for the ssh protocol.

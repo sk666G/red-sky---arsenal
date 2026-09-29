@@ -5,9 +5,9 @@ import "encoding/binary"
 // MD4 in pure Go. Needed for NTLM (MD4(UTF-16LE(password))). Go's stdlib
 // dropped MD4 years ago — this is a compact correct implementation.
 
-func md4F(x, y, z uint32) uint32 { return (x & y) | (^x & z) }
-func md4G(x, y, z uint32) uint32 { return (x & y) | (x & z) | (y & z) }
-func md4H(x, y, z uint32) uint32 { return x ^ y ^ z }
+func md4F(x, y, z uint32) uint32      { return (x & y) | (^x & z) }
+func md4G(x, y, z uint32) uint32      { return (x & y) | (x & z) | (y & z) }
+func md4H(x, y, z uint32) uint32      { return x ^ y ^ z }
 func md4Rol(x uint32, n uint8) uint32 { return (x << n) | (x >> (32 - n)) }
 
 // MD4 returns the 16-byte MD4 digest.

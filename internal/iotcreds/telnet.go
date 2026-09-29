@@ -21,6 +21,9 @@ type TelnetOptions struct {
 // then checks for shell markers (# $ > busybox welcome). Deny markers
 // (incorrect / denied / fail) always win.
 func sprayTelnet(ctx context.Context, opts TelnetOptions, onAttempt func(i int, c Cred, ok bool)) ([]Hit, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if opts.Host == "" {
 		return nil, errors.New("iotcreds/telnet: host required")
 	}

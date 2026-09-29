@@ -7,9 +7,10 @@
 // than the ~80 lines of field arithmetic this needs.
 //
 // Addresses:
-//   BTC P2PKH  — base58check(0x00 || RIPEMD160(SHA256(pubkey)))
-//   BTC P2WPKH — bech32("bc", 0, RIPEMD160(SHA256(pubkey)))
-//   ETH        — keccak256(uncompressed pubkey[1:])[12:]  (keccak, not sha3)
+//
+//	BTC P2PKH  — base58check(0x00 || RIPEMD160(SHA256(pubkey)))
+//	BTC P2WPKH — bech32("bc", 0, RIPEMD160(SHA256(pubkey)))
+//	ETH        — keccak256(uncompressed pubkey[1:])[12:]  (keccak, not sha3)
 package cryptogo
 
 import (

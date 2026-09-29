@@ -18,10 +18,10 @@ import (
 
 // HashCrackResult is the outcome of a wordlist crack.
 type HashCrackResult struct {
-	Found    bool
-	Word     string
-	Tried    int64
-	Elapsed  time.Duration
+	Found   bool
+	Word    string
+	Tried   int64
+	Elapsed time.Duration
 }
 
 // HashAlgorithm identifies which hash to compute per word.
