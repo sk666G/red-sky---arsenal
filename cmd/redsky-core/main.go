@@ -1204,3 +1204,35 @@ func runWebSSTIDispatch(mgr *session.Manager, a webSSTIArgs) {
 		log.Printf("[webssti] start: %v", err)
 	}
 }
+
+// webXSSArgs carries the operator's -webxss* flags.
+type webXSSArgs struct {
+	Context string
+	JS      string
+	FPs     bool
+}
+
+// runWebXSSDispatch waits for the first agent, fires a WebXSSStart.
+func runWebXSSDispatch(mgr *session.Manager, a webXSSArgs) {
+	for len(mgr.Sessions()) == 0 {
+		time.Sleep(500 * time.Millisecond)
+	}
+	s := mgr.Sessions()[0]
+	sessionID := fmt.Sprintf("xs-%d", time.Now().UnixNano())
+
+	ctx := a.Context
+	if ctx == "all" {
+		ctx = ""
+	}
+	log.Printf("[webxss] ctx=%q fps=%v -> %s", ctx, a.FPs, s.AgentID)
+
+	req := proto.WebXSSStart{
+		SessionID: sessionID,
+		Context:   ctx,
+		JS:        a.JS,
+		FPs:       a.FPs,
+	}
+	if err := s.SendWebXSSStart(sessionID, req); err != nil {
+		log.Printf("[webxss] start: %v", err)
+	}
+}

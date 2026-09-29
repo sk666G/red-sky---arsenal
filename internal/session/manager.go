@@ -581,3 +581,9 @@ func (s *Session) SendWebXXEStart(sessionID string, req proto.WebXXEStart) error
 	req.SessionID = sessionID
 	return s.sendTunnelMsg(proto.TypeWebXXEStart, req)
 }
+
+// SendWebXSSStart asks the agent to render XSS payloads.
+func (s *Session) SendWebXSSStart(sessionID string, req proto.WebXSSStart) error {
+	req.SessionID = sessionID
+	return s.sendTunnelMsg(proto.TypeWebXSSStart, req)
+}

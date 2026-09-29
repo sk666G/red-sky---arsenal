@@ -290,6 +290,13 @@ func runSession(host string, port int, agentID, caFP string, beaconSec int) erro
 				continue
 			}
 			go runWebXXE(conn, sess, wx)
+		case proto.TypeWebXSSStart:
+			var wx proto.WebXSSStart
+			if err := json.Unmarshal(env.Payload, &wx); err != nil {
+				log.Printf("[webxss] unmarshal: %v", err)
+				continue
+			}
+			go runWebXSS(conn, sess, wx)
 		case proto.TypeWirelessStop:
 			var ws proto.WirelessStop
 			if err := json.Unmarshal(env.Payload, &ws); err != nil {
@@ -1620,4 +1627,39 @@ func runWebXXE(conn net.Conn, sess *crypto.Session, wx proto.WebXXEStart) {
 		send(p.Label, p.Kind, webgo.RenderXXE(p, opts), p.Notes, "")
 	}
 	send("done", "done", "", "", "")
+}
+
+// runWebXSS streams XSS payloads for the requested context (or all).
+func runWebXSS(conn net.Conn, sess *crypto.Session, wx proto.WebXSSStart) {
+	send := func(kind, ctx, label, payload, notes string) {
+		sendTunnelAck(conn, sess, proto.TypeWebXSSData, proto.WebXSSData{
+			SessionID: wx.SessionID,
+			Context:   ctx,
+			Label:     label,
+			Payload:   payload,
+			Notes:     notes,
+			Kind:      kind,
+		})
+	}
+
+	if wx.FPs {
+		for _, fp := range webgo.XSSFingerprints {
+			send("fingerprint", fp.Framework, fp.Marker, fp.Marker, fp.Meaning)
+		}
+		send("done", "", "", "", "")
+		return
+	}
+
+	js := wx.JS
+	if js == "" {
+		js = "alert(1)"
+	}
+
+	for _, p := range webgo.XSSPayloads {
+		if wx.Context != "" && wx.Context != "all" && p.Context != wx.Context {
+			continue
+		}
+		send("payload", p.Context, p.Label, webgo.RenderXSSPayload(p, js), p.Notes)
+	}
+	send("done", "", "", "", "")
 }

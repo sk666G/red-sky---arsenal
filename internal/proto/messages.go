@@ -62,6 +62,8 @@ const (
 	TypeWebSSTIData   MessageType = "webssti_data"
 	TypeWebXXEStart   MessageType = "webxxe_start"
 	TypeWebXXEData    MessageType = "webxxe_data"
+	TypeWebXSSStart   MessageType = "webxss_start"
+	TypeWebXSSData    MessageType = "webxss_data"
 	TypeWirelessStop  MessageType = "wireless_stop"
 	TypeWirelessData  MessageType = "wireless_data"
 	TypeWirelessDone  MessageType = "wireless_done"
@@ -540,5 +542,24 @@ type WebXXEData struct {
 	Payload   string `json:"payload"`
 	Notes     string `json:"notes,omitempty"`
 	Extra     string `json:"extra,omitempty"` // e.g. "target=/etc/passwd"
+	Done      bool   `json:"done"`
+}
+
+// WebXSSStart asks the agent to render XSS payloads for a given context.
+type WebXSSStart struct {
+	SessionID string `json:"session_id"`
+	Context   string `json:"context,omitempty"` // html|attribute|url|script|css|dom|jsonp|markdown|all
+	JS        string `json:"js,omitempty"`      // payload body; empty = "alert(1)"
+	FPs       bool   `json:"fps,omitempty"`     // return framework fingerprints
+}
+
+// WebXSSData streams rendered payloads back to core.
+type WebXSSData struct {
+	SessionID string `json:"session_id"`
+	Context   string `json:"context"`
+	Label     string `json:"label"`
+	Payload   string `json:"payload"`
+	Notes     string `json:"notes,omitempty"`
+	Kind      string `json:"kind"` // payload | fingerprint | done
 	Done      bool   `json:"done"`
 }
