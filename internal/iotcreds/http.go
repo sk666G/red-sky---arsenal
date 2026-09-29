@@ -26,6 +26,9 @@ type HTTPOptions struct {
 //
 // onAttempt is called after every credential (index, cred, ok) — optional.
 func SprayHTTP(ctx context.Context, opts HTTPOptions, onAttempt func(i int, c Cred, ok bool)) ([]Hit, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if opts.Host == "" {
 		return nil, fmt.Errorf("iotcreds/http: host required")
 	}
