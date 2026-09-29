@@ -7,17 +7,15 @@ from Program.utils import print_info, print_err
 def _usage():
     print_info("redsky cloud <sub-command> [args...]")
     print_info("")
-    print_info("  aws <whoami|enumerate|privesc|s3|assume> [--profile X] [--region Y]")
-    print_info("      STS identity, IAM/S3/EC2/Lambda inventory, privesc scoring, AssumeRole")
+    print_info("  metadata     probe --cloud aws|gcp|azure [--out FILE]")
+    print_info("  metadata     chain")
+    print_info("      hit instance metadata service, harvest credentials")
     print_info("")
-    print_info("  azure <tenant|userenum|device-code|device-poll|imds|arm-enum> [opts]")
-    print_info("      tenant resolve, user enum, device-code phish, IMDS token, ARM enum")
+    print_info("  iam_enum     whoami | walk")
+    print_info("      sts:GetCallerIdentity + full IAM walk + SimulatePrincipalPolicy")
     print_info("")
-    print_info("  gcp <whoami|privesc|metadata|list> [--sa key.json]")
-    print_info("      SA identity, privesc catalog match, metadata server theft")
-    print_info("")
-    print_info("  metadata <probe|ssrf|payloads> [--target URL-with-FUZZ]")
-    print_info("      multi-cloud IMDS probe + SSRF payload generator")
+    print_info("  privesc      chains | chain <name> | run <driver> --target X")
+    print_info("      IAM privesc chain catalog + runnable escalation drivers")
 
 
 def run_cli(args: List[str]) -> int:
@@ -29,17 +27,14 @@ def run_cli(args: List[str]) -> int:
         _usage()
         return 0
 
-    if sub in ("aws", "a"):
-        from .aws import run_cli as _f
-        return int(_f(args[1:]))
-    if sub in ("azure", "az", "z"):
-        from .azure import run_cli as _f
-        return int(_f(args[1:]))
-    if sub in ("gcp", "google", "g"):
-        from .gcp import run_cli as _f
-        return int(_f(args[1:]))
-    if sub in ("metadata", "imds", "meta", "m"):
+    if sub in ("metadata", "md", "m"):
         from .metadata import run_cli as _f
+        return int(_f(args[1:]))
+    if sub in ("iam_enum", "iam", "enum", "i"):
+        from .iam_enum import run_cli as _f
+        return int(_f(args[1:]))
+    if sub in ("privesc", "priv", "p"):
+        from .privesc import run_cli as _f
         return int(_f(args[1:]))
 
     print_err("unknown cloud sub-command: " + sub)
