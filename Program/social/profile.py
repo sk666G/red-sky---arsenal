@@ -1,15 +1,21 @@
 # language: Python, file: Program/social/profile.py, target: Red Sky social — target dossier
-# Aggregates the JSON outputs produced by osint.py into a single dossier.
-# Input: a directory of osint_*.json files, or run with --auto to invoke the
-# osint subcommands first (requires network). Merges usernames, emails, phones,
-# domains, and constructs name-variant candidates from what it finds.
+# Aggregates the JSON outputs from Program/social/osint.py into a target
+# dossier. Reads every hit file under Output/social/, groups by target,
+# emits a markdown report with:
+#
+#   - Executive summary (who we found, key handles)
+#   - Platform presence map
+#   - Emails / phones / domains
+#   - Attack-surface notes (SSO patterns, dev environments, password hints
+#     derived from username variants)
+#   - Suggested next collection steps
 
 import json
 import re
 import sys
 import time
 from pathlib import Path
-from typing import Dict, List, Set
+from typing import Dict, List, Optional, Set
 
 from Program.theme.palette import SCARLET, ARTERY, BONE, ASH, OK, CLOT, RESET, BOLD
 from Program.utils import print_ok, print_err, print_info, print_warn, print_kv
@@ -17,190 +23,268 @@ from Program.utils.paths import OUTPUT_DIR
 
 
 SOCIAL_DIR = OUTPUT_DIR / "social"
-DOSSIER_DIR = SOCIAL_DIR / "dossiers"
-DOSSIER_DIR.mkdir(parents=True, exist_ok=True)
+PROFILE_DIR = SOCIAL_DIR / "profiles"
 
 
-def _load_json(p: Path) -> Dict:
+def _load_json(p: Path) -> Optional[object]:
     try:
         return json.loads(p.read_text())
     except Exception:
-        return {}
+        return None
 
 
-def cmd_build(input_dir: str, name: str, out_file: str) -> int:
-    root = Path(input_dir).expanduser() if input_dir else SOCIAL_DIR
-    if not root.exists():
-        print_err("input dir not found: " + str(root))
-        return 1
+def _classify(path: Path) -> str:
+    n = path.name
+    if n.startswith("username_"):
+        return "username"
+    if n.startswith("email_"):
+        return "email"
+    if n.startswith("domain_"):
+        return "domain"
+    return "other"
 
-    print_info("building dossier from " + str(root))
+
+def _extract_target_from_name(p: Path) -> str:
+    """username_<handle>_<ts>.json → <handle>"""
+    stem = p.stem
+    parts = stem.split("_")
+    if len(parts) >= 3 and parts[-1].isdigit():
+        return "_".join(parts[1:-1])
+    return "_".join(parts[1:]) if len(parts) > 1 else stem
+
+
+def _password_variants(handle: str, real_name: str = "") -> List[str]:
+    """Generate the pattern of passwords a target is likely to use —
+    documents for the operator to feed into a spray, not a lookup."""
+    base_words: Set[str] = set()
+    if handle:
+        base_words.add(handle.lower())
+        base_words.add(handle)
+    if real_name:
+        for part in re.split(r"[^A-Za-z]+", real_name):
+            if part:
+                base_words.add(part.lower())
+                base_words.add(part)
+
+    years = [str(y) for y in range(1980, 2030)]
+    suffixes = ["!", "1", "123", "2024", "2025", "!", "@"]
+    prefixes = [""]
+
+    out = set()
+    for w in base_words:
+        for y in years[::5]:  # sample — every 5th year keeps this small
+            out.add(w + y)
+            out.add(w.capitalize() + y)
+        for s in suffixes:
+            out.add(w + s)
+        out.add(w.capitalize() + "123")
+        out.add(w + "!")
+    return sorted(out)[:80]
+
+
+def _collect_all(root: Path) -> Dict:
+    """Walk Output/social/*.json, bucket by classification."""
+    buckets: Dict[str, List[Dict]] = {"username": [], "email": [], "domain": [], "other": []}
+    targets: Set[str] = set()
+    for f in root.glob("*.json"):
+        kind = _classify(f)
+        data = _load_json(f)
+        if data is None:
+            continue
+        entry = {"file": str(f), "data": data}
+        buckets[kind].append(entry)
+        if kind == "username":
+            t = _extract_target_from_name(f)
+            if t:
+                targets.add(t)
+    return {"buckets": buckets, "targets": sorted(targets)}
+
+
+def _render_markdown(target: str, collected: Dict, extra: Dict) -> str:
+    lines: List[str] = []
+    lines.append("# Target dossier — " + target)
+    lines.append("")
+    lines.append("_Generated " + time.strftime("%Y-%m-%d %H:%M:%S") + "_")
+    lines.append("")
+
+    # ── summary ──
+    lines.append("## Summary")
+    lines.append("")
+    handles = collected.get("handles", [])
+    emails = collected.get("emails", [])
+    domains = collected.get("domains", [])
+    lines.append("- Handles: **" + str(len(handles)) + "**")
+    if handles:
+        for h in handles[:10]:
+            lines.append("  - " + h)
+    lines.append("- Emails: **" + str(len(emails)) + "**")
+    for e in emails[:10]:
+        lines.append("  - " + e)
+    lines.append("- Domains: **" + str(len(domains)) + "**")
+    for d in domains[:10]:
+        lines.append("  - " + d)
+    lines.append("")
+
+    # ── platform presence ──
+    lines.append("## Platform presence")
+    lines.append("")
+    if collected.get("platforms"):
+        for p in sorted(collected["platforms"]):
+            lines.append("- **" + p["platform"] + "** — " + p.get("url", ""))
+    else:
+        lines.append("_No platform hits collected._")
+    lines.append("")
+
+    # ── domain footprint ──
+    lines.append("## Domain footprint")
+    lines.append("")
+    if collected.get("subdomains"):
+        for s in collected["subdomains"]:
+            lines.append("- `" + s["host"] + "` → " + s["ip"])
+    else:
+        lines.append("_No subdomains collected._")
+    lines.append("")
+
+    # ── derived attack surface ──
+    lines.append("## Derived attack surface")
+    lines.append("")
+    if collected.get("subdomains"):
+        # look for interesting ones
+        interesting = []
+        for s in collected["subdomains"]:
+            h = s["host"].lower()
+            for kw in ("admin", "dev", "staging", "internal", "intranet", "git", "jenkins", "jira", "grafana", "db"):
+                if kw in h:
+                    interesting.append(s["host"] + " (keyword: " + kw + ")")
+                    break
+        if interesting:
+            lines.append("### High-interest subdomains")
+            for i in interesting:
+                lines.append("- " + i)
+            lines.append("")
+
+    if target:
+        variants = _password_variants(target)
+        if variants:
+            lines.append("### Suggested password spray candidates")
+            lines.append("")
+            lines.append("_Derived from the handle — common username+year/suffix patterns._")
+            lines.append("")
+            lines.append("```")
+            for v in variants[:50]:
+                lines.append(v)
+            lines.append("```")
+            lines.append("")
+
+    lines.append("## Suggested next steps")
+    lines.append("")
+    if not collected.get("platforms"):
+        lines.append("- Run `redsky social osint username --user " + target + "`")
+    if not collected.get("subdomains"):
+        lines.append("- If a domain is known, run `redsky social osint domain --domain <domain>`")
+    if not collected.get("emails"):
+        lines.append("- If a domain is known, derive email pattern and run `redsky social osint email`")
+    lines.append("- Feed discovered subdomains into `redsky iot` / `redsky scanner` modules")
+    lines.append("- Feed discovered emails into `redsky phish` for pretext generation")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def cmd_build(target: str, extra_domains: str, out: str) -> int:
+    SOCIAL_DIR.mkdir(parents=True, exist_ok=True)
+    PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+
+    print_info("target profile builder")
+    print_kv("target", target or "(all)")
+    print_kv("source", SOCIAL_DIR)
     print()
 
-    dossier: Dict = {
-        "name": name or "unknown",
-        "created": time.time(),
-        "usernames": set(),
-        "emails": set(),
-        "phones": set(),
-        "domains": set(),
-        "platforms": {},
-        "sources": [],
+    collected = _collect_all(SOCIAL_DIR)
+    # explicit target — restrict to files whose name contains it
+    if target:
+        for kind in list(collected["buckets"].keys()):
+            collected["buckets"][kind] = [
+                e for e in collected["buckets"][kind]
+                if target.lower() in e["file"].lower()
+            ]
+
+    platforms = []
+    for e in collected["buckets"]["username"]:
+        for hit in (e["data"] if isinstance(e["data"], list) else []):
+            if isinstance(hit, dict):
+                platforms.append(hit)
+
+    subdomains = []
+    for e in collected["buckets"]["domain"]:
+        for hit in (e["data"] if isinstance(e["data"], list) else []):
+            if isinstance(hit, dict):
+                subdomains.append(hit)
+
+    emails = []
+    for e in collected["buckets"]["email"]:
+        if isinstance(e["data"], dict) and e["data"].get("email"):
+            emails.append(e["data"]["email"])
+
+    domains = list({s["host"].split(".", 1)[-1] for s in subdomains if "host" in s})
+    if extra_domains:
+        for d in extra_domains.split(","):
+            d = d.strip()
+            if d:
+                domains.append(d)
+    handles = [target] if target else []
+
+    agg = {
+        "platforms": platforms,
+        "subdomains": subdomains,
+        "emails": emails,
+        "domains": sorted(set(domains)),
+        "handles": handles,
     }
 
-    for p in root.rglob("*.json"):
-        if p.parent.name == "dossiers":
-            continue
-        data = _load_json(p)
-        if not data:
-            continue
-        dossier["sources"].append(str(p.relative_to(root)))
+    md = _render_markdown(target or "unknown", agg, {})
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    out_path = Path(out) if out else PROFILE_DIR / ("profile_" + (target or "all") + "_" + ts + ".md")
+    out_path.write_text(md)
 
-        # usernames
-        if "username" in data:
-            dossier["usernames"].add(data["username"])
-            for hit in data.get("found", []):
-                platform = hit.get("platform")
-                if platform:
-                    dossier["platforms"].setdefault(platform, []).append(hit.get("url", ""))
-
-        # email
-        if "email" in data:
-            dossier["emails"].add(data["email"])
-            if data.get("domain"):
-                dossier["domains"].add(data["domain"])
-
-        # phone
-        if "digits" in data:
-            dossier["phones"].add(data["digits"])
-
-        # domain
-        if "domain" in data:
-            dossier["domains"].add(data["domain"])
-            for e in data.get("emails", []):
-                dossier["emails"].add(e)
-
-    # name variants — if we have an email like firstname.lastname@x, expand
-    variants = set()
-    for email in dossier["emails"]:
-        local = email.split("@")[0]
-        if "." in local or "_" in local or "-" in local:
-            for sep in (".", "_", "-"):
-                if sep in local:
-                    parts = local.split(sep)
-                    if len(parts) >= 2:
-                        variants.add(" ".join(parts))
-                        variants.add(parts[0].capitalize() + " " + parts[-1].capitalize())
-                        variants.add(parts[0] + parts[-1])
-                        variants.add(parts[0][0] + parts[-1])
-                        variants.add(parts[0] + parts[-1][0])
-
-    dossier["name_variants"] = sorted(variants)
-    dossier["usernames"] = sorted(dossier["usernames"])
-    dossier["emails"] = sorted(dossier["emails"])
-    dossier["phones"] = sorted(dossier["phones"])
-    dossier["domains"] = sorted(dossier["domains"])
-
-    # pretty print
-    print_info("dossier: " + dossier["name"])
+    print_kv("platforms", len(platforms))
+    print_kv("subdomains", len(subdomains))
+    print_kv("emails", len(emails))
+    print_kv("domains", len(agg["domains"]))
     print()
-    for k in ("usernames", "emails", "phones", "domains", "name_variants"):
-        v = dossier.get(k, [])
-        if not v:
-            continue
-        print(ARTERY + BOLD + "-- " + k + " (" + str(len(v)) + ")" + RESET)
-        for item in v[:30]:
-            print("  " + SCARLET + "*" + RESET + " " + BONE + str(item) + RESET)
-        if len(v) > 30:
-            print("  " + ASH + "... +" + str(len(v) - 30) + " more" + RESET)
+    print_ok("dossier written: " + str(out_path))
+    print()
+    print(md[:2000])
+    if len(md) > 2000:
         print()
-
-    if dossier["platforms"]:
-        print(ARTERY + BOLD + "-- platforms" + RESET)
-        for platform, urls in sorted(dossier["platforms"].items()):
-            print("  " + SCARLET + "*" + RESET + " " + BONE + platform.ljust(18) + RESET
-                  + " " + ASH + str(len(urls)) + " URL(s)" + RESET)
-        print()
-
-    out = Path(out_file) if out_file else DOSSIER_DIR / ("dossier_" + (name or "target") + "_" + str(int(time.time())) + ".json")
-    out.write_text(json.dumps(dossier, indent=2, default=str))
-    print_kv("saved", out)
-    return 0
-
-
-def cmd_show(dossier_file: str) -> int:
-    p = Path(dossier_file).expanduser()
-    if not p.exists():
-        print_err("dossier not found: " + str(p))
-        return 1
-    d = _load_json(p)
-    if not d:
-        print_err("bad dossier")
-        return 1
-
-    print_info("dossier: " + d.get("name", "unknown"))
-    print_kv("created", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(d.get("created", 0))))
-    print_kv("sources", str(len(d.get("sources", []))))
-    print()
-    for k in ("usernames", "emails", "phones", "domains", "name_variants"):
-        v = d.get(k, [])
-        if v:
-            print(ARTERY + BOLD + "-- " + k + RESET)
-            for item in v:
-                print("  " + SCARLET + "*" + RESET + " " + BONE + str(item) + RESET)
-            print()
-    return 0
-
-
-def cmd_list() -> int:
-    dossiers = sorted(DOSSIER_DIR.glob("*.json"))
-    if not dossiers:
-        print_info("no dossiers yet")
-        return 0
-    print_info(str(len(dossiers)) + " dossier(s)")
-    print()
-    for d in dossiers:
-        try:
-            data = json.loads(d.read_text())
-            n = data.get("name", "?")
-            print("  " + BONE + d.name + RESET + "  " + ARTERY + n + RESET)
-        except Exception:
-            print("  " + BONE + d.name + RESET)
+        print_info("... full report at " + str(out_path))
     return 0
 
 
 def run_cli(args):
     import argparse
-    p = argparse.ArgumentParser(prog="redsky social profile", add_help=False)
-    p.add_argument("-h", "--help", action="store_true")
-    p.add_argument("action", nargs="?", default="help",
-                   choices=["build", "show", "list", "help"])
-    p.add_argument("--in", dest="indir", default="")
-    p.add_argument("--dossier", default="")
-    p.add_argument("--name", default="")
-    p.add_argument("--out", default="")
+    sub = args[0] if args else "help"
+    rest = args[1:] if args else []
 
-    try:
-        ns = p.parse_args(args)
-    except SystemExit:
-        print_err("usage: redsky social profile <build|show|list> [opts]")
-        return 2
-
-    if ns.action == "help" or ns.help:
-        print_info("build [--in dir] [--name target]   -- merge osint_*.json into a dossier")
-        print_info("show --dossier file.json            -- print a saved dossier")
-        print_info("list                                -- list all dossiers")
+    if sub in ("-h", "--help", "help"):
+        print_info("redsky social profile <sub-command>")
+        print_info("")
+        print_info("  build [--target HANDLE] [--extra-domains a.com,b.com] [--out FILE]")
+        print_info("      aggregate osint JSON into a markdown dossier")
         return 0
 
-    if ns.action == "build":
-        return cmd_build(ns.indir, ns.name, ns.out)
-    if ns.action == "show":
-        if not ns.dossier:
-            print_err("--dossier required")
+    if sub == "build":
+        p = argparse.ArgumentParser(prog="redsky social profile build", add_help=False)
+        p.add_argument("--target", default="")
+        p.add_argument("--extra-domains", default="")
+        p.add_argument("--out", default="")
+        try:
+            ns = p.parse_args(rest)
+        except SystemExit:
+            print_err("usage: redsky social profile build [--target HANDLE] [--out FILE]")
             return 2
-        return cmd_show(ns.dossier)
-    if ns.action == "list":
-        return cmd_list()
+        return cmd_build(ns.target, ns.extra_domains, ns.out)
+
+    print_err("unknown profile sub-command: " + sub)
     return 2
 
 

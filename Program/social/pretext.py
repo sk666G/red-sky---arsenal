@@ -1,10 +1,21 @@
-# language: Python, file: Program/social/pretext.py, target: Red Sky social — pretext generator
-# Generates ready-to-send pretexts across channels: email, phone/vishing script,
-# LinkedIn DM, SMS, USB drop cover story, in-person social engineering.
-# Templates + variables. Optional LLM polish hook for teams that want it.
+# language: Python, file: Program/social/pretext.py, target: Red Sky social — pretext generation
+# Social-engineering pretext library. Every pretext is a template whose
+# placeholders ({target_name}, {target_email}, {company}, {attacker_name},
+# {lure_url}, {callback_phone}, {deadline}) get filled from operator input.
+#
+# Categories of pretext:
+#   it_support      — password reset / MFA / "we noticed suspicious activity"
+#   hr              — payroll update / benefits / policy acknowledgment
+#   security_alert  — "your account was accessed" / "verification required"
+#   vendor          — invoice / quote / contract, often with an attachment
+#   delivery        — package / courier / customs fee
+#   exec            — CEO / CFO impersonation, urgency-driven
+#   recruitment     — recruiter / hiring / role offer
+#   helpdesk_mfa    — the classic "please approve this push" phone call
+#
+# Delivery channel and follow-up cadence accompany each pretext.
 
 import json
-import random
 import sys
 import time
 from pathlib import Path
@@ -17,342 +28,372 @@ from Program.utils.paths import OUTPUT_DIR
 
 SOCIAL_DIR = OUTPUT_DIR / "social"
 PRETEXT_DIR = SOCIAL_DIR / "pretexts"
-PRETEXT_DIR.mkdir(parents=True, exist_ok=True)
 
 
-# Each scenario: name, channel, when_to_use, fields (fill-ins), template
-SCENARIOS: List[Dict] = [
-    # ── EMAIL ──
-    {
-        "name": "it_password_reset",
-        "channel": "email",
-        "when": "target works in a corporate environment, mid-week, business hours",
-        "fields": ["target_first_name", "company", "sender_name", "link"],
-        "subject": "Action required: password expires in 24 hours",
-        "body": """Hi {target_first_name},
+PRETEXTS: Dict[str, Dict] = {
+    "it_support": {
+        "title": "IT support — password / MFA reset",
+        "channel": "email or voice",
+        "subject_lines": [
+            "Action required: password expires in 24 hours",
+            "Security notice: unusual sign-in on your account",
+            "IT: scheduled MFA re-enrollment for your account",
+            "Reset your {company} password to continue",
+        ],
+        "body": """Hi {target_name},
 
-Our records show your {company} account password is set to expire in 24 hours. To avoid losing access to email, Teams, and SharePoint, please reset it now using the link below.
+Our monitoring detected a sign-in to your {company} account from an
+unrecognized device (IP 104.{fake_ip}). As a security precaution, we need
+you to re-verify your identity and reset your password within the next
+24 hours.
 
-{link}
+If you don't verify, your account will be temporarily suspended.
 
-If you've already reset your password in the last 7 days, you can ignore this message. If you need help, reply to this email or contact the helpdesk at extension 4357.
+Verify now: {lure_url}
+
+If you have any trouble, reply to this email or call IT at {callback_phone}.
 
 Thanks,
-{sender_name}
-IT Service Desk""",
+{attacker_name}
+{company} IT Support
+""",
+        "follow_up": [
+            "1h later: DM/call — 'Did you get my email about the sign-in?'",
+            "4h later: second email — 'This is time-sensitive.'",
+            "24h later: escalation — 'Your account is now in a limited state.'",
+        ],
     },
-    {
-        "name": "invoice_payment",
+    "hr": {
+        "title": "HR — payroll / benefits update",
         "channel": "email",
-        "when": "target has any finance/AP function, end of month",
-        "fields": ["target_first_name", "vendor_name", "amount", "invoice_id", "link"],
-        "subject": "Invoice {invoice_id} — payment due",
-        "body": """Hi {target_first_name},
+        "subject_lines": [
+            "Action required: 2025 benefits enrollment",
+            "Payroll update — direct deposit confirmation needed",
+            "Important: policy acknowledgment due by Friday",
+            "Employee handbook update — please sign",
+        ],
+        "body": """Hi {target_name},
 
-Please find attached invoice {invoice_id} from {vendor_name} for {amount}. Payment terms are net 15; please approve and schedule by end of week.
+Our payroll system is being upgraded for the new fiscal year, and we need
+you to confirm your direct deposit details by Friday. Employees who don't
+confirm will have their next pay cycle delayed.
 
-The invoice and remittance details are on our portal:
-{link}
+Confirm here: {lure_url}
 
-Let me know if you need anything else.
+Login uses your existing {company} credentials.
 
-Regards,
-{vendor_name} Accounts Receivable""",
+Thanks,
+{attacker_name}
+{company} People Operations
+""",
+        "follow_up": [
+            "Next day: reply-all bump from a 'colleague' — 'I just did this, quick'",
+            "48h: HR follow-up — 'We're still missing your confirmation'",
+        ],
     },
-    {
-        "name": "ceo_urgent",
+    "security_alert": {
+        "title": "Security alert — suspicious activity",
         "channel": "email",
-        "when": "target reports to or adjacent to an exec, Friday afternoon works best",
-        "fields": ["target_first_name", "ceo_name", "task"],
-        "subject": "Quick favor",
-        "body": """{target_first_name} — are you at your desk?
+        "subject_lines": [
+            "Security alert: someone accessed your {company} account",
+            "Unusual sign-in from Russia — confirm or deny",
+            "New device sign-in to your {company} account",
+        ],
+        "body": """{target_name},
 
-I'm in back-to-back meetings and need {task} handled today. Can you grab it and let me know once it's done? Discretion appreciated.
+We noticed a sign-in to your {company} account from Russia on {fake_date}
+at 03:14 UTC. The device was an Android phone we haven't seen before.
 
-Sent from my iPhone
-{ceo_name}""",
+If this wasn't you, secure your account now: {lure_url}
+
+If this was you, you can safely ignore this message.
+
+- {company} Security Team
+""",
+        "follow_up": [
+            "30m later: SMS to phone — 'This is {company} security, please confirm'",
+            "2h later: email — 'Your account has been temporarily locked'",
+        ],
     },
-    {
-        "name": "shared_document",
-        "channel": "email",
-        "when": "target is a knowledge worker, any time",
-        "fields": ["target_first_name", "sender_name", "doc_title", "link"],
-        "subject": "{sender_name} shared \"{doc_title}\" with you",
-        "body": """{sender_name} has shared a document with you:
+    "vendor": {
+        "title": "Vendor — invoice / purchase order",
+        "channel": "email with attachment",
+        "subject_lines": [
+            "Invoice #{invoice_num} — payment due in 5 days",
+            "Updated W-9 for {company} approval",
+            "Quote for Q1 — see attached",
+            "Contract renewal — signature required",
+        ],
+        "body": """Hello,
 
-{doc_title}
+Attached is invoice #{invoice_num} for services rendered last month.
+Payment terms are net-15, so please process promptly. If you need our
+updated W-9 or banking details, those are in the attached PDF.
 
-Open in Google Drive / OneDrive:
-{link}
-
-You'll be prompted to sign in with your work account to view.
-
-— File sharing service""",
+- A/R, {company}
+{vendor_email}
+""",
+        "follow_up": [
+            "3 days later: 'Any update on this invoice? Our finance team is asking.'",
+            "7 days later: 'Second reminder — late fee will apply.'",
+        ],
     },
-    # ── VISHING (phone script) ──
-    {
-        "name": "helpdesk_callback",
-        "channel": "vishing",
-        "when": "target is a regular helpdesk user, IT-familiar",
-        "fields": ["target_first_name", "company", "sender_name", "ticket_id"],
-        "script": """[Opening — warm, calm, no rush]
+    "delivery": {
+        "title": "Delivery — package / customs",
+        "channel": "SMS or email",
+        "subject_lines": [
+            "Your package could not be delivered",
+            "Customs fee required for your shipment",
+            "Delivery attempt failed — reschedule",
+        ],
+        "body": """Your package (tracking #{tracking}) could not be delivered because
+a small customs fee was not paid.
 
-"Hi, is this {target_first_name}? Great — this is {sender_name} from {company} IT support. I'm calling about ticket {ticket_id} that came in this morning. Do you have a minute?"
+Reschedule delivery and pay the fee: {lure_url}
 
-[If yes]
+The package will be returned to sender in 48 hours if not claimed.
 
-"Thanks. We flagged some unusual sign-in activity on your account overnight — looks like someone trying to log in from outside the country. We've already locked it as a precaution. I need to re-verify you so we can unlock it."
-
-[The ask — deliver without a pause]
-
-"Can you confirm your current work email password so I can validate your session? Once we do that I'll unlock and reset it for you."
-
-[If they hesitate]
-
-"Totally understand — this is standard. If you'd rather, I can send you an email right now and you click the link, but the fix takes longer that way. Your call."
-
-[If they give it]
-
-"Perfect, thank you. I'm unlocking now. You'll get a reset email in the next five minutes — just click the link from that email, don't reply to it. Any questions for me before I let you go?"
-
-[Close]
-
-"Thanks for your time. Have a good rest of your day.""" ,
+- Delivery Support
+""",
+        "follow_up": [
+            "24h later: SMS — 'Last attempt for your package.'",
+        ],
     },
-    {
-        "name": "bank_fraud_alert",
-        "channel": "vishing",
-        "when": "consumer target, any time but evenings land better",
-        "fields": ["target_first_name", "bank_name", "amount", "card_last4"],
-        "script": """[Opening]
+    "exec": {
+        "title": "Executive — CEO / CFO impersonation",
+        "channel": "email or SMS",
+        "subject_lines": [
+            "Quick favor",
+            "Re: acquisition — need this by EOD",
+            "Wire confirmation needed",
+        ],
+        "body": """{target_name} — need a quick favor. I'm in a board meeting, so
+email only. We're closing on an acquisition and I need you to send a wire
+confirmation to our counsel. Can you do this in the next 30 minutes? I'll
+send the details as soon as you confirm.
 
-"Hi, is this {target_first_name}? This is the fraud department at {bank_name}. I'm calling about a {amount} charge we saw hit your card ending {card_last4} about twenty minutes ago. Do you recognize that charge?"
+- Sent from my iPhone
 
-[They say no]
-
-"That's what I was afraid of. I'm going to block that merchant and reverse the charge, but first I need to verify you're the account holder. Standard security questions — I'll be quick."
-
-[The ask — one question at a time, don't stack them]
-
-"Can you confirm the email address on file and the last four of your SSN? Then I'll send a verification code to the phone number we have on file."
-
-[Code interception]
-
-"Great — code sent. Read it back to me when it arrives."
-
-[Once code is provided — the attacker has completed the account takeover]
-
-"Perfect, that's everything. You'll see the reversal in 24-48 hours. Anything else I can do for you?""" ,
+{attacker_name}, CEO
+""",
+        "follow_up": [
+            "15m later: 'Have you seen my last message?'",
+            "1h later: 'This is time-critical, please respond.'",
+        ],
     },
-    # ── LINKEDIN DM ──
-    {
-        "name": "recruiter_dm",
-        "channel": "linkedin",
-        "when": "target has an up-to-date LinkedIn, active in the last 30 days",
-        "fields": ["target_first_name", "sender_name", "role", "company", "link"],
-        "body": """Hi {target_first_name} — I came across your profile and wanted to reach out. We're building out a {role} team at {company} and your background is exactly the kind we look for. Would you have 15 minutes this week for a quick chat?
+    "recruitment": {
+        "title": "Recruitment — LinkedIn / hiring",
+        "channel": "LinkedIn DM or email",
+        "subject_lines": [
+            "Senior role at {company} — your profile matches",
+            "Following up on the {role} opening",
+            "Compensation details for {role} — strictly confidential",
+        ],
+        "body": """Hi {target_name},
 
-Here's the role overview before you commit to a call:
-{link}
+I'm a recruiter working with {company} on a senior {role} search. Your
+background looks like a great fit. Comp is in the {comp_range} range plus
+equity.
 
-No pressure at all — happy to just connect regardless.
+If you're interested, take a look at the full JD and apply here:
+{lure_url}
 
-— {sender_name}""",
+Happy to chat — my calendar is on the doc.
+
+- {attacker_name}
+Talent @ {company}
+""",
+        "follow_up": [
+            "3 days later: 'Just following up — the team is moving fast.'",
+            "1 week: 'They've narrowed to 3 finalists — do you want to be in?'",
+        ],
     },
-    {
-        "name": "conference_followup",
-        "channel": "linkedin",
-        "when": "target attended a recent industry conference (check their feed)",
-        "fields": ["target_first_name", "conference", "sender_name", "topic"],
-        "body": """{target_first_name} — great to run into you at {conference} last week. I wanted to follow up on the {topic} conversation.
+    "helpdesk_mfa": {
+        "title": "Helpdesk MFA push fatigue (phone)",
+        "channel": "voice",
+        "script": """Ring script:
 
-Attached my notes and the reference links we talked about:
-{link}
+  "{target_name}, hi — this is {attacker_name} from {company} IT. We
+   just pushed an MFA approval to your phone for a routine maintenance
+   window. You should see the number pop up — could you approve it for
+   me? I'm on a time-sensitive migration and yours is the last account
+   we need."
 
-Let's grab coffee if you're ever in town.
+If challenged:
 
-— {sender_name}""",
+  "Totally understand — I'm calling from extension {ext}. If you want
+   to verify, hang up and call the helpdesk line, my ticket is #{ticket}."
+
+If still challenged, close warmly and try the next target. Do NOT push.
+""",
+        "follow_up": [
+            "Repeat 3-5 times over 10-15 min — push fatigue",
+            "Escalate to voice call if MFA is happening (vishing the code)",
+        ],
     },
-    # ── SMS ──
-    {
-        "name": "parcel_delivery",
-        "channel": "sms",
-        "when": "consumer targets, any time",
-        "fields": ["target_first_name", "courier", "link"],
-        "body": """Hi {target_first_name}, {courier} here. Your parcel is on hold — the shipping address we have is incomplete. Update it within 24h or it returns to sender:
-
-{link}""",
-    },
-    {
-        "name": "mfa_prompt",
-        "channel": "sms",
-        "when": "target uses MFA on personal accounts",
-        "fields": ["target_first_name", "service"],
-        "body": """{target_first_name}, we've received a sign-in request for your {service} account from an unrecognized device. If this was not you, reply STOP to lock the account. If it was you, reply YES to approve.""",
-    },
-    # ── USB DROP ──
-    {
-        "name": "usb_payroll",
-        "channel": "usb",
-        "when": "target company has a physical lobby or parking lot",
-        "fields": ["company", "quarter"],
-        "body": """Lure: label the USB "Payroll — {company} — Q{quarter} final" and drop in the parking lot or lobby bathroom.
-
-Cover story when confronted:
-"I found this drive in the parking lot with your company's name on it — wanted to turn it in."
-
-If the target plugs it in, the HID payload runs. Offer to leave it with reception as a plausibility move.""",
-    },
-    {
-        "name": "usb_conference",
-        "channel": "usb",
-        "when": "industry conference with swag tables",
-        "fields": ["conference"],
-        "body": """Lure: label USB with {conference} branding + "session recordings" or "slide deck".
-
-Drop method: leave several on the swag table, in the keynote hall, and on the coffee station.
-
-Plausibility: attendees assume these are official conference materials. Insertion rate is highest in the first hour of the day.""",
-    },
-    # ── IN-PERSON ──
-    {
-        "name": "inperson_delivery",
-        "channel": "in-person",
-        "when": "target office has a walk-in reception",
-        "fields": ["company", "target_first_name", "package"],
-        "body": """Costume: delivery uniform (matching the courier for the building).
-
-Prop: clipboard + cardboard box with the {company} logo + a signature sheet.
-
-Script at reception:
-"Delivery for {target_first_name} — need a signature. Which way is their desk?"
-
-If they offer to take it: "Sorry, signature has to be from the named recipient — liability thing. I'll wait or I can find them."
-
-Most reception staff will walk you back or point you at the right floor.""",
-    },
-]
+}
 
 
-def cmd_list() -> int:
-    print_info(str(len(SCENARIOS)) + " pretext scenarios")
+def _fill(template: str, values: Dict[str, str]) -> str:
+    out = template
+    for k, v in values.items():
+        out = out.replace("{" + k + "}", v or "")
+    return out
+
+
+def _defaults() -> Dict[str, str]:
+    return {
+        "target_name":    "Jordan Smith",
+        "target_email":   "jordan.smith@example.com",
+        "company":        "Acme Corp",
+        "attacker_name":  "Alex Chen",
+        "lure_url":       "https://login.acme-portal.com/verify",
+        "callback_phone": "+1-555-0100",
+        "deadline":       "24 hours",
+        "role":           "Senior Engineer",
+        "comp_range":     "$180-220k",
+        "vendor_email":   "ar@acme-vendors.com",
+        "invoice_num":    "INV-20841",
+        "tracking":       "RS94118520US",
+        "fake_ip":        "47.29",
+        "fake_date":      "2025-11-14",
+        "ext":            "2104",
+        "ticket":         "HD-7719",
+    }
+
+
+def cmd_catalog() -> int:
+    print_info("pretext catalog")
     print()
-    by_channel: Dict[str, List[Dict]] = {}
-    for s in SCENARIOS:
-        by_channel.setdefault(s["channel"], []).append(s)
-    for channel, scenarios in by_channel.items():
-        print(ARTERY + BOLD + "-- " + channel + RESET)
-        for s in scenarios:
-            print("  " + SCARLET + "*" + RESET + " " + BONE + s["name"].ljust(22) + RESET
-                  + " " + CLOT + s["when"] + RESET)
-        print()
+    for key, p in PRETEXTS.items():
+        print("  " + SCARLET + key.ljust(16) + RESET + " " + BONE + p["title"] + RESET)
+        print("      " + ASH + "channel: " + p["channel"] + RESET)
+    print()
+    print_info("run:  redsky social pretext show <category> [--target NAME] [--lure-url URL] [...]")
+    print_info("      redsky social pretext all --out DIR [--lure-url URL]")
     return 0
 
 
-def cmd_gen(scenario_name: str, channel: str, vars_str: str, out_file: str) -> int:
-    # pick
-    if scenario_name and scenario_name != "all":
-        scenarios = [s for s in SCENARIOS if s["name"] == scenario_name]
-        if not scenarios:
-            print_err("unknown scenario: " + scenario_name)
-            print_info("available: " + ", ".join(s["name"] for s in SCENARIOS))
-            return 2
-    elif channel and channel != "all":
-        scenarios = [s for s in SCENARIOS if s["channel"] == channel]
-    else:
-        scenarios = SCENARIOS
+def cmd_show(category: str, values: Dict[str, str]) -> int:
+    if category not in PRETEXTS:
+        print_err("unknown category: " + category)
+        print_info("available: " + ", ".join(PRETEXTS.keys()))
+        return 1
+    p = PRETEXTS[category]
+    merged = _defaults()
+    merged.update({k: v for k, v in values.items() if v})
 
-    # parse vars like "target_first_name=Nono,company=Acme"
-    vars_: Dict[str, str] = {}
-    if vars_str:
-        for pair in vars_str.split(","):
-            if "=" in pair:
-                k, v = pair.split("=", 1)
-                vars_[k.strip()] = v.strip()
-
-    results = []
-    for s in scenarios:
-        # default missing vars to placeholder
-        filled = {}
-        missing = []
-        for f in s.get("fields", []):
-            if f in vars_:
-                filled[f] = vars_[f]
-            else:
-                filled[f] = "[" + f.upper() + "]"
-                missing.append(f)
-
-        out = {
-            "name": s["name"],
-            "channel": s["channel"],
-            "when": s["when"],
-            "missing_fields": missing,
-        }
-        if "subject" in s:
-            out["subject"] = s["subject"].format(**filled)
-        if "body" in s:
-            out["body"] = s["body"].format(**filled)
-        if "script" in s:
-            out["script"] = s["script"].format(**filled)
-        results.append(out)
-
-    # pretty print
-    for r in results:
-        print(BOLD + SCARLET + r["name"] + RESET + "  (" + r["channel"] + ")")
-        print(ASH + "when: " + RESET + r["when"])
-        if r["missing_fields"]:
-            print(WARN_FMT("missing: " + ", ".join(r["missing_fields"])))
+    print(SCARLET + BOLD + "== " + p["title"] + " ==" + RESET)
+    print(ARTERY + "channel: " + RESET + p["channel"])
+    print()
+    if "subject_lines" in p:
+        print(ARTERY + "subject lines:" + RESET)
+        for s in p["subject_lines"]:
+            print("  - " + _fill(s, merged))
         print()
-        if "subject" in r:
-            print(ARTERY + "Subject: " + RESET + BONE + r["subject"] + RESET)
-            print()
-        if "body" in r:
-            print(r["body"])
-        if "script" in r:
-            print(r["script"])
+    if "body" in p:
+        print(ARTERY + "body:" + RESET)
+        print(_fill(p["body"], merged))
+    if "script" in p:
+        print(ARTERY + "script:" + RESET)
+        print(_fill(p["script"], merged))
+    if "follow_up" in p:
         print()
-        print(ASH + ("-" * 70) + RESET)
-        print()
-
-    out = Path(out_file) if out_file else PRETEXT_DIR / ("pretexts_" + str(int(time.time())) + ".json")
-    out.write_text(json.dumps(results, indent=2))
-    print_kv("saved", out)
+        print(ARTERY + "follow-up cadence:" + RESET)
+        for s in p["follow_up"]:
+            print("  - " + _fill(s, merged))
     return 0
 
 
-def WARN_FMT(s: str) -> str:
-    # small helper — inline warning color without importing WARN
-    from Program.theme.palette import SCARLET as _S, RESET as _R
-    return _S + s + _R
+def cmd_all(out_dir: str, values: Dict[str, str]) -> int:
+    d = Path(out_dir) if out_dir else PRETEXT_DIR / ("all_" + time.strftime("%Y%m%d_%H%M%S"))
+    d.mkdir(parents=True, exist_ok=True)
+    merged = _defaults()
+    merged.update({k: v for k, v in values.items() if v})
+    for key, p in PRETEXTS.items():
+        lines = []
+        lines.append("== " + p["title"] + " ==")
+        lines.append("channel: " + p["channel"])
+        lines.append("")
+        if "subject_lines" in p:
+            lines.append("subject lines:")
+            for s in p["subject_lines"]:
+                lines.append("  - " + _fill(s, merged))
+            lines.append("")
+        if "body" in p:
+            lines.append("body:")
+            lines.append(_fill(p["body"], merged))
+        if "script" in p:
+            lines.append("script:")
+            lines.append(_fill(p["script"], merged))
+        if "follow_up" in p:
+            lines.append("")
+            lines.append("follow-up cadence:")
+            for s in p["follow_up"]:
+                lines.append("  - " + _fill(s, merged))
+        (d / (key + ".txt")).write_text("\n".join(lines))
+        print_ok(key + " → " + str(d / (key + ".txt")))
+    print()
+    print_kv("dir", d)
+    print_kv("categories", len(PRETEXTS))
+    return 0
 
 
 def run_cli(args):
     import argparse
-    p = argparse.ArgumentParser(prog="redsky social pretext", add_help=False)
-    p.add_argument("-h", "--help", action="store_true")
-    p.add_argument("action", nargs="?", default="list", choices=["list", "gen"])
-    p.add_argument("scenario", nargs="?", default="all")
-    p.add_argument("--channel", default="all",
-                   choices=["email", "vishing", "linkedin", "sms", "usb", "in-person", "all"])
-    p.add_argument("--vars", default="")
-    p.add_argument("--out", default="")
+    sub = args[0] if args else "catalog"
+    rest = args[1:] if args else []
 
-    try:
-        ns = p.parse_args(args)
-    except SystemExit:
-        print_err("usage: redsky social pretext <list|gen> [scenario] [--channel C] [--vars 'k=v,k=v']")
-        return 2
-
-    if ns.help:
-        print_info("list                                        -- show scenarios by channel")
-        print_info("gen all --vars 'target_first_name=Nono,company=Acme,link=https://x/'")
-        print_info("gen it_password_reset --vars '...'          -- one scenario")
-        print_info("gen all --channel vishing                   -- only vishing")
+    if sub in ("-h", "--help", "help"):
+        print_info("redsky social pretext <sub-command>")
+        print_info("")
+        print_info("  catalog                          list pretext categories")
+        print_info("  show <category> [--target NAME] [--company NAME] [--lure-url URL] ...")
+        print_info("      render one pretext with placeholders filled")
+        print_info("  all [--out DIR] [--lure-url URL] [--target NAME] ...")
+        print_info("      render every pretext to files")
+        print_info("")
+        print_info("categories: " + ", ".join(PRETEXTS.keys()))
         return 0
 
-    if ns.action == "list":
-        return cmd_list()
-    return cmd_gen(ns.scenario, ns.channel, ns.vars, ns.out)
+    if sub in ("catalog", "list"):
+        return cmd_catalog()
+
+    if sub == "show":
+        p = argparse.ArgumentParser(prog="redsky social pretext show", add_help=False)
+        p.add_argument("category")
+        p.add_argument("--target", dest="target_name", default="")
+        p.add_argument("--target-email", default="")
+        p.add_argument("--company", default="")
+        p.add_argument("--attacker", dest="attacker_name", default="")
+        p.add_argument("--lure-url", default="")
+        p.add_argument("--callback", dest="callback_phone", default="")
+        try:
+            ns = p.parse_args(rest)
+        except SystemExit:
+            print_err("usage: redsky social pretext show <category> [--target NAME] [...]")
+            return 2
+        values = {k: v for k, v in vars(ns).items() if k != "category" and v}
+        return cmd_show(ns.category, values)
+
+    if sub == "all":
+        p = argparse.ArgumentParser(prog="redsky social pretext all", add_help=False)
+        p.add_argument("--out", default="")
+        p.add_argument("--target", dest="target_name", default="")
+        p.add_argument("--company", default="")
+        p.add_argument("--attacker", dest="attacker_name", default="")
+        p.add_argument("--lure-url", default="")
+        p.add_argument("--callback", dest="callback_phone", default="")
+        try:
+            ns = p.parse_args(rest)
+        except SystemExit:
+            print_err("usage: redsky social pretext all [--out DIR] [--target NAME] [...]")
+            return 2
+        values = {k: v for k, v in vars(ns).items() if k != "out" and v}
+        return cmd_all(ns.out, values)
+
+    print_err("unknown pretext sub-command: " + sub)
+    return 2
 
 
 if __name__ == "__main__":

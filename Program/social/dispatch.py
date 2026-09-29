@@ -7,14 +7,14 @@ from Program.utils import print_info, print_err
 def _usage():
     print_info("redsky social <sub-command> [args...]")
     print_info("")
-    print_info("  osint <username|email|phone|domain|gravatar> <target>")
-    print_info("      handle enumeration, email pivot, phone lookup, domain recon")
+    print_info("  osint       username | email | phone | domain")
+    print_info("      35-platform handle lookup, gravatar+MX, phone hint, subdomain brute")
     print_info("")
-    print_info("  profile <build|show|list> [--in dir] [--dossier file]")
-    print_info("      merge osint outputs into a target dossier")
+    print_info("  profile     build [--target HANDLE] [--extra-domains a,b]")
+    print_info("      aggregate collected OSINT into a markdown dossier")
     print_info("")
-    print_info("  pretext <list|gen> [scenario|all] [--channel C] [--vars 'k=v,k=v']")
-    print_info("      pre-scripted pretexts for email, vishing, LinkedIn, SMS, USB, in-person")
+    print_info("  pretext     catalog | show <cat> | all")
+    print_info("      8-category social-engineering pretext library")
 
 
 def run_cli(args: List[str]) -> int:
@@ -26,13 +26,13 @@ def run_cli(args: List[str]) -> int:
         _usage()
         return 0
 
-    if sub in ("osint", "recon", "o"):
+    if sub in ("osint", "o"):
         from .osint import run_cli as _f
         return int(_f(args[1:]))
-    if sub in ("profile", "dossier", "p"):
+    if sub in ("profile", "prof", "p"):
         from .profile import run_cli as _f
         return int(_f(args[1:]))
-    if sub in ("pretext", "pretexts", "pre"):
+    if sub in ("pretext", "pre", "pretexts"):
         from .pretext import run_cli as _f
         return int(_f(args[1:]))
 
