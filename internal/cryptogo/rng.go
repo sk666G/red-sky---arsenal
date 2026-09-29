@@ -2,7 +2,6 @@ package cryptogo
 
 import (
 	"errors"
-	"fmt"
 )
 
 // Weak-PRNG attack primitives. Go analogue of Program/crypto/rng.py.
@@ -113,79 +112,4 @@ func WinCRTSeedCandidates(firstOut uint16, lo, hi uint32) []uint32 {
 		}
 	}
 	return out
-}
-
-// --- Mersenne Twister 32-bit (reference, not recovery) ---
-
-// MTState is a MT19937 state as used by Python random, PHP mt_rand, etc.
-// Only untemper + state restoration live here — the recovery attack
-// (624 outputs → state) is a larger build.
-type MTState struct {
-	Index int
-	State [624]uint32
-}
-
-// mtTemper is the standard MT19937 output transform.
-func mtTemper(y uint32) uint32 {
-	y ^= y >> 11
-	y ^= (y << 7) & 0x9D2C5680
-	y ^= (y << 15) & 0xEFC60000
-	y ^= y >> 18
-	return y
-}
-
-// mtUntemper reverses the output transform to recover one state word from
-// one observed output.
-func mtUntemper(y uint32) uint32 {
-	// undo y ^= y >> 18
-	y ^= y >> 18
-	// undo y ^= (y << 15) & 0xEFC60000
-	y ^= (y << 15) & 0xEFC60000
-	// the above is not exact for 15-bit shift; iterate to converge
-	for i := 0; i < 5; i++ {
-		y ^= (y << 15) & 0xEFC60000
-	}
-	// undo y ^= (y << 7) & 0x9D2C5680
-	for i := 0; i < 5; i++ {
-		y ^= (y << 7) & 0x9D2C5680
-	}
-	// undo y ^= y >> 11
-	y ^= y >> 11
-	y ^= y >> 22
-	return y
-}
-
-// MTUntemperAll recovers the full state array from 624 consecutive
-// observations. Returns a fresh MTState with the recovered words.
-func MTUntemperAll(observations []uint32) (*MTState, error) {
-	if len(observations) < 624 {
-		return nil, fmt.Errorf("cryptogo/rng: need 624 outputs, got %d", len(observations))
-	}
-	st := &MTState{Index: 624}
-	for i := 0; i < 624; i++ {
-		st.State[i] = mtUntemper(observations[i])
-	}
-	return st, nil
-}
-
-// MTTwist advances the state array (the MT "twist" step).
-func (s *MTState) twist() {
-	for i := 0; i < 624; i++ {
-		y := (s.State[i] & 0x80000000) | (s.State[(i+1)%624] & 0x7FFFFFFF)
-		s.State[i] = s.State[(i+397)%624] ^ (y >> 1)
-		if y&1 != 0 {
-			s.State[i] ^= 0x9908B0DF
-		}
-	}
-	s.Index = 0
-}
-
-// Next returns the next tempered MT19937 output.
-func (s *MTState) Next() uint32 {
-	if s.Index >= 624 {
-		s.twist()
-	}
-	y := s.State[s.Index]
-	s.Index++
-	return mtTemper(y)
 }
