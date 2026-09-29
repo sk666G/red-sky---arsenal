@@ -26,6 +26,7 @@ import (
 	"github.com/sk666G/red-sky---arsenal/internal/scanner"
 	"github.com/sk666G/red-sky---arsenal/internal/session"
 	rsTLS "github.com/sk666G/red-sky---arsenal/internal/tls"
+	"github.com/sk666G/red-sky---arsenal/internal/tunnel"
 	"github.com/sk666G/red-sky---arsenal/internal/tui"
 	"github.com/sk666G/red-sky---arsenal/internal/wire"
 )
@@ -43,6 +44,7 @@ func main() {
 	headless := flag.Bool("headless", false, "log-only mode, no TUI")
 	noLLM := flag.Bool("no-llm", false, "use rule-based planner instead of Ollama")
 	llmModel := flag.String("llm-model", "huihui_ai/qwen2.5-abliterate:14b", "Ollama model for planning")
+	socksBind := flag.String("socks", "", "start a SOCKS5 listener on this address (e.g. 127.0.0.1:1080) that tunnels through the first connected agent")
 	flag.Parse()
 
 	if *pluginFlag != "" {
@@ -90,6 +92,10 @@ func main() {
 			fmt.Printf("[%s] %s: %s\n", ev.Kind, ev.AgentID, ev.Text)
 		}
 		return
+	}
+
+	if *socksBind != "" {
+		go startSocks(*socksBind, mgr)
 	}
 
 	pl := planner.NewOllama("", *llmModel)
@@ -297,5 +303,26 @@ func runScanner(cidr, ports string, threads int, timeout time.Duration) {
 		} else {
 			fmt.Printf("saved: %s\n", path)
 		}
+	}
+}
+
+
+// startSocks waits for an agent to connect, then starts a SOCKS5 listener
+// that tunnels every connection through it.
+func startSocks(bind string, mgr *session.Manager) {
+	// Wait for first session.
+	for {
+		sessions := mgr.Sessions()
+		if len(sessions) > 0 {
+			s := sessions[0]
+			ts := tunnel.NewManager()
+			srv := &tunnel.Server{Bind: bind, Sender: s, Tunnels: ts}
+			log.Printf("[socks] starting on %s, exit=%s", bind, s.AgentID)
+			if err := srv.Start(context.Background()); err != nil {
+				log.Printf("[socks] error: %v", err)
+			}
+			return
+		}
+		time.Sleep(500 * time.Millisecond)
 	}
 }

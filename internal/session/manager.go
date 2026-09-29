@@ -47,12 +47,14 @@ type Session struct {
 	Joined   time.Time
 	LastSeen time.Time
 
-	conn   net.Conn
-	crypto *crypto.Session
+	conn    net.Conn
+	crypto  *crypto.Session
+	writeMu sync.Mutex
 	write  chan *Task
-	tasks  map[string]*Task // keyed by task ID
-	mu     sync.Mutex
-	closed bool
+	tasks   map[string]*Task // keyed by task ID
+	tunnels map[string]chan []byte
+	mu      sync.Mutex
+	closed  bool
 }
 
 // Send enqueues a task for the agent.
@@ -157,6 +159,7 @@ func (m *Manager) Register(agentID string, info proto.AgentInfo, conn net.Conn, 
 		crypto:   cs,
 		write:    make(chan *Task, 64),
 		tasks:    make(map[string]*Task),
+		tunnels:  make(map[string]chan []byte),
 	}
 	m.mu.Lock()
 	// If an old session with the same agent ID exists, close it.
@@ -272,6 +275,22 @@ func (m *Manager) readerLoop(s *Session) {
 				s.mu.Unlock()
 				m.emit("result", s.AgentID, fmt.Sprintf("%s rc=%d", r.TaskID, r.ExitCode))
 			}
+		case proto.TypeTunnelData:
+			var t proto.TunnelData
+			if err := json.Unmarshal(env.Payload, &t); err == nil {
+				s.RouteTunnelInbound(t.TunnelID, t.Data, t.EOF)
+			}
+		case proto.TypeTunnelReady:
+			var t proto.TunnelReady
+			if err := json.Unmarshal(env.Payload, &t); err == nil {
+				m.emit("tunnel", s.AgentID, "ready "+t.TunnelID)
+			}
+		case proto.TypeTunnelFail:
+			var t proto.TunnelFail
+			if err := json.Unmarshal(env.Payload, &t); err == nil {
+				m.emit("error", s.AgentID, "tunnel "+t.TunnelID+" failed: "+t.Error)
+				s.UnregisterTunnel(t.TunnelID)
+			}
 		case proto.TypeError:
 			var e proto.ErrorReport
 			if err := json.Unmarshal(env.Payload, &e); err == nil {
@@ -285,3 +304,89 @@ func (m *Manager) readerLoop(s *Session) {
 
 // ErrNoSession is returned when a task is submitted to a dead session.
 var ErrNoSession = errors.New("session: no such agent")
+
+
+// --- Tunnel / AgentSender interface ---
+
+// SendTunnelOpen tells the agent to dial host:port for the given tunnel.
+func (s *Session) SendTunnelOpen(tunnelID, host string, port int) error {
+	t := proto.TunnelOpen{TunnelID: tunnelID, Host: host, Port: port}
+	return s.sendTunnelMsg(proto.TypeTunnelOpen, t)
+}
+
+// SendTunnelData ships bytes for the tunnel.
+func (s *Session) SendTunnelData(tunnelID string, data []byte, eof bool) error {
+	t := proto.TunnelData{TunnelID: tunnelID, Data: data, EOF: eof}
+	return s.sendTunnelMsg(proto.TypeTunnelData, t)
+}
+
+// SendTunnelClose tears the tunnel down.
+func (s *Session) SendTunnelClose(tunnelID, reason string) error {
+	t := proto.TunnelClose{TunnelID: tunnelID, Reason: reason}
+	return s.sendTunnelMsg(proto.TypeTunnelClose, t)
+}
+
+// AgentID returns this session's agent ID.
+func (s *Session) AgentID2() string { return s.AgentID }
+
+// sendTunnelMsg marshals a tunnel payload and sends it encrypted.
+func (s *Session) sendTunnelMsg(t proto.MessageType, payload any) error {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	env := proto.Envelope{Type: t, Payload: raw}
+	envBytes, err := json.Marshal(env)
+	if err != nil {
+		return err
+	}
+	enc, err := s.crypto.Encrypt(envBytes)
+	if err != nil {
+		return err
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return wire.WriteFrame(s.conn, wire.FlagEncrypted, enc)
+}
+
+// RouteTunnelInbound dispatches an inbound tunnel_data message to a waiting reader.
+func (s *Session) RouteTunnelInbound(tunnelID string, data []byte, eof bool) {
+	s.mu.Lock()
+	ch, ok := s.tunnels[tunnelID]
+	s.mu.Unlock()
+	if !ok {
+		return
+	}
+	if data != nil {
+		select {
+		case ch <- data:
+		default:
+			// buffer full, drop the packet (tunnel should apply backpressure)
+		}
+	}
+	if eof {
+		close(ch)
+		s.mu.Lock()
+		delete(s.tunnels, tunnelID)
+		s.mu.Unlock()
+	}
+}
+
+// RegisterTunnel creates the local buffer for a new tunnel.
+func (s *Session) RegisterTunnel(tunnelID string) chan []byte {
+	ch := make(chan []byte, 128)
+	s.mu.Lock()
+	s.tunnels[tunnelID] = ch
+	s.mu.Unlock()
+	return ch
+}
+
+// UnregisterTunnel drops the local buffer.
+func (s *Session) UnregisterTunnel(tunnelID string) {
+	s.mu.Lock()
+	if ch, ok := s.tunnels[tunnelID]; ok {
+		close(ch)
+		delete(s.tunnels, tunnelID)
+	}
+	s.mu.Unlock()
+}

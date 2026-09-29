@@ -25,6 +25,10 @@ const (
 	TypeFileChunk  MessageType = "file_chunk"
 	TypeTunnelData MessageType = "tunnel_data"
 	TypeError      MessageType = "error"
+
+	// Tunnel control (bidirectional)
+	TypeTunnelReady MessageType = "tunnel_ready"
+	TypeTunnelFail  MessageType = "tunnel_fail"
 )
 
 // Envelope wraps every message. Payload is the raw JSON of the concrete type
@@ -86,4 +90,37 @@ type Kill struct{}
 type ErrorReport struct {
 	TaskID  string `json:"task_id,omitempty"`
 	Message string `json:"message"`
+}
+
+
+// TunnelOpen is sent by core to ask the agent to dial (host:port).
+type TunnelOpen struct {
+	TunnelID string `json:"tunnel_id"`
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+}
+
+// TunnelData is one chunk of a tunnel stream. Direction is implied by sender.
+// Data is base64-encoded on the wire via JSON []byte marshalling.
+type TunnelData struct {
+	TunnelID string `json:"tunnel_id"`
+	Data     []byte `json:"data"`
+	EOF      bool   `json:"eof,omitempty"`
+}
+
+// TunnelClose asks both ends to tear down a tunnel.
+type TunnelClose struct {
+	TunnelID string `json:"tunnel_id"`
+	Reason   string `json:"reason,omitempty"`
+}
+
+// TunnelReady is the agent's acknowledgement that a tunnel is dialed.
+type TunnelReady struct {
+	TunnelID string `json:"tunnel_id"`
+}
+
+// TunnelFail is the agent's failure report.
+type TunnelFail struct {
+	TunnelID string `json:"tunnel_id"`
+	Error    string `json:"error"`
 }

