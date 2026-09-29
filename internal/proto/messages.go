@@ -90,6 +90,8 @@ const (
 	TypeCCTVData        MessageType = "cctv_data"
 	TypeReportStart     MessageType = "report_start"
 	TypeReportData      MessageType = "report_data"
+	TypeWebReqStart     MessageType = "webreq_start"
+	TypeWebReqData      MessageType = "webreq_data"
 	TypeWirelessStop    MessageType = "wireless_stop"
 	TypeWirelessData    MessageType = "wireless_data"
 	TypeWirelessDone    MessageType = "wireless_done"
@@ -899,4 +901,29 @@ type ReportData struct {
 	Sources   int    `json:"sources,omitempty"`
 	Error     string `json:"error,omitempty"`
 	Done      bool   `json:"done"`
+}
+
+// WebReqStart sends one raw HTTP request and streams the response back.
+type WebReqStart struct {
+	SessionID string            `json:"session_id"`
+	URL       string            `json:"url"`
+	Method    string            `json:"method,omitempty"`
+	Headers   map[string]string `json:"headers,omitempty"`
+	Body      []byte            `json:"body,omitempty"`
+	Timeout   int               `json:"timeout,omitempty"`
+	SkipTLS   bool              `json:"skip_tls,omitempty"`
+	RawHex    string            `json:"raw_hex,omitempty"` // if set, used as the entire request
+}
+
+// WebReqData streams the response.
+type WebReqData struct {
+	SessionID  string            `json:"session_id"`
+	Status     int               `json:"status"`
+	StatusLine string            `json:"status_line,omitempty"`
+	Headers    map[string]string `json:"headers,omitempty"`
+	Body       []byte            `json:"body,omitempty"`
+	BodyLen    int               `json:"body_len,omitempty"`
+	DurationMs int64             `json:"duration_ms,omitempty"`
+	Error      string            `json:"error,omitempty"`
+	Done       bool              `json:"done"`
 }

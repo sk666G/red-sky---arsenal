@@ -665,3 +665,9 @@ func (s *Session) SendReportStart(sessionID string, req proto.ReportStart) error
 	req.SessionID = sessionID
 	return s.sendTunnelMsg(proto.TypeReportStart, req)
 }
+
+// SendWebReqStart sends one raw HTTP request via the agent.
+func (s *Session) SendWebReqStart(sessionID string, req proto.WebReqStart) error {
+	req.SessionID = sessionID
+	return s.sendTunnelMsg(proto.TypeWebReqStart, req)
+}

@@ -218,6 +218,11 @@ func main() {
 	reportSrcDir := flag.String("report-dir", "", "directory to walk for JSON sources")
 	reportFindings := flag.String("report-findings", "", "path to a JSON array of findings")
 	reportOut := flag.String("report-out", "", "output path (default: /tmp/redsky_report_<ts>.md)")
+	webReqURL := flag.String("webreq", "", "send a raw HTTP request via the first agent")
+	webReqMethod := flag.String("webreq-method", "GET", "HTTP method")
+	webReqBody := flag.String("webreq-body", "", "request body (string)")
+	webReqTimeout := flag.Int("webreq-timeout", 15, "timeout (seconds)")
+	webReqSkipTLS := flag.Bool("webreq-skip-tls", true, "skip TLS verification")
 	pmkidIface := flag.String("pmkid", "", "802.11 PMKID harvest: monitor-mode iface")
 	pmkidChannel := flag.Int("pmkid-channel", 0, "PMKID: set wifi channel before harvest")
 	pmkidDuration := flag.Duration("pmkid-duration", 60*time.Second, "PMKID: total harvest run time")
@@ -757,6 +762,17 @@ func main() {
 			SourceDir:  *reportSrcDir,
 			Findings:   findingsBlob,
 			OutPath:    *reportOut,
+		})
+	}
+
+	// webreq dispatch — send a raw HTTP request via the first agent
+	if *webReqURL != "" {
+		go runWebReqDispatch(mgr, webReqArgs{
+			URL:     *webReqURL,
+			Method:  *webReqMethod,
+			Body:    *webReqBody,
+			Timeout: *webReqTimeout,
+			SkipTLS: *webReqSkipTLS,
 		})
 	}
 
@@ -1933,5 +1949,35 @@ func runReportDispatch(mgr *session.Manager, a reportArgs) {
 	}
 	if err := s.SendReportStart(sessionID, req); err != nil {
 		log.Printf("[report] start: %v", err)
+	}
+}
+
+// webReqArgs carries the operator's -webreq* flags.
+type webReqArgs struct {
+	URL     string
+	Method  string
+	Body    string
+	Timeout int
+	SkipTLS bool
+}
+
+// runWebReqDispatch waits for the first agent, sends a WebReqStart.
+func runWebReqDispatch(mgr *session.Manager, a webReqArgs) {
+	for len(mgr.Sessions()) == 0 {
+		time.Sleep(500 * time.Millisecond)
+	}
+	s := mgr.Sessions()[0]
+	sessionID := fmt.Sprintf("wr-%d", time.Now().UnixNano())
+	log.Printf("[webreq] %s %s -> %s", a.Method, a.URL, s.AgentID)
+	req := proto.WebReqStart{
+		SessionID: sessionID,
+		URL:       a.URL,
+		Method:    a.Method,
+		Body:      []byte(a.Body),
+		Timeout:   a.Timeout,
+		SkipTLS:   a.SkipTLS,
+	}
+	if err := s.SendWebReqStart(sessionID, req); err != nil {
+		log.Printf("[webreq] start: %v", err)
 	}
 }

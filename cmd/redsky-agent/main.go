@@ -384,6 +384,12 @@ func runSession(host string, port int, agentID, caFP string, beaconSec int) erro
 				continue
 			}
 			go runReport(conn, sess, r)
+		case proto.TypeWebReqStart:
+			var w proto.WebReqStart
+			if err := json.Unmarshal(env.Payload, &w); err != nil {
+				continue
+			}
+			go runWebReq(conn, sess, w)
 		case proto.TypeWirelessStop:
 			var ws proto.WirelessStop
 			if err := json.Unmarshal(env.Payload, &ws); err != nil {
@@ -2766,5 +2772,33 @@ func runReport(conn net.Conn, sess *crypto.Session, r proto.ReportStart) {
 		Findings:  len(rep.Findings),
 		Sources:   len(rep.Raw),
 		Done:      true,
+	})
+}
+
+// runWebReq sends one raw HTTP request and streams the response back.
+func runWebReq(conn net.Conn, sess *crypto.Session, w proto.WebReqStart) {
+	ctx := context.Background()
+	opts := webgo.WebReqOptions{
+		URL:           w.URL,
+		Method:        w.Method,
+		Headers:       w.Headers,
+		Body:          w.Body,
+		Timeout:       time.Duration(w.Timeout) * time.Second,
+		SkipTLSVerify: w.SkipTLS,
+	}
+	if w.RawHex != "" {
+		opts.RawRequest = hexDecode(w.RawHex)
+	}
+	r := webgo.WebReq(ctx, opts)
+	sendTunnelAck(conn, sess, proto.TypeWebReqData, proto.WebReqData{
+		SessionID:  w.SessionID,
+		Status:     r.Status,
+		StatusLine: r.StatusLine,
+		Headers:    r.Headers,
+		Body:       r.Body,
+		BodyLen:    len(r.Body),
+		DurationMs: r.DurationMs,
+		Error:      r.Error,
+		Done:       true,
 	})
 }
