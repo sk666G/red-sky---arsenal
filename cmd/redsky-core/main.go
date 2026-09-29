@@ -1204,16 +1204,11 @@ func runSocialDispatch(mgr *session.Manager, a socialArgs) {
 
 	req := proto.SocialStart{
 		SessionID: sessionID,
-		Action: func() string {
-			if a.WriteDriver != "" {
-				return "write"
-			}
-			return a.Action
-		}(),
-		User:    a.User,
-		Email:   a.Email,
-		Domain:  a.Domain,
-		Threads: a.Threads,
+		Action:    a.Action,
+		User:      a.User,
+		Email:     a.Email,
+		Domain:    a.Domain,
+		Threads:   a.Threads,
 	}
 	if err := s.SendSocialStart(sessionID, req); err != nil {
 		log.Printf("[social] start: %v", err)
@@ -1377,8 +1372,13 @@ func runAdEnumDispatch(mgr *session.Manager, a adEnumArgs) {
 	log.Printf("[adenum] %s @ %s:%d -> %s", a.Action, a.Host, a.Port, s.AgentID)
 
 	req := proto.AdEnumStart{
-		SessionID:   sessionID,
-		Action:      a.Action,
+		SessionID: sessionID,
+		Action: func() string {
+			if a.WriteDriver != "" {
+				return "write"
+			}
+			return a.Action
+		}(),
 		Host:        a.Host,
 		Port:        a.Port,
 		UseTLS:      a.TLS,
