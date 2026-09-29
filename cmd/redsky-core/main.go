@@ -203,6 +203,9 @@ func main() {
 	droneLat := flag.Float64("drone-lat", 0, "goto latitude")
 	droneLon := flag.Float64("drone-lon", 0, "goto longitude")
 	droneAlt := flag.Float64("drone-alt", 0, "goto altitude (meters)")
+	droneV2 := flag.Bool("drone-v2", false, "use MAVLink v2 framing")
+	droneSigKey := flag.String("drone-sig-key", "", "MAVLink v2 signing key (hex, 32 bytes)")
+	droneLinkID := flag.Uint("drone-link-id", 0, "MAVLink v2 signing link id")
 	pmkidIface := flag.String("pmkid", "", "802.11 PMKID harvest: monitor-mode iface")
 	pmkidChannel := flag.Int("pmkid-channel", 0, "PMKID: set wifi channel before harvest")
 	pmkidDuration := flag.Duration("pmkid-duration", 60*time.Second, "PMKID: total harvest run time")
@@ -707,6 +710,9 @@ func main() {
 			Lat:        float32(*droneLat),
 			Lon:        float32(*droneLon),
 			Alt:        float32(*droneAlt),
+			UseV2:      *droneV2,
+			SigKey:     *droneSigKey,
+			LinkID:     uint8(*droneLinkID),
 		})
 	}
 
@@ -1785,6 +1791,9 @@ type droneArgs struct {
 	Lat        float32
 	Lon        float32
 	Alt        float32
+	UseV2      bool
+	SigKey     string
+	LinkID     uint8
 }
 
 // runDroneDispatch waits for the first agent, sends a DroneStart.
@@ -1809,6 +1818,9 @@ func runDroneDispatch(mgr *session.Manager, a droneArgs) {
 		Lat:            a.Lat,
 		Lon:            a.Lon,
 		Alt:            a.Alt,
+		UseV2:          a.UseV2,
+		SigKeyHex:      a.SigKey,
+		LinkID:         a.LinkID,
 	}
 	if err := s.SendDroneStart(sessionID, req); err != nil {
 		log.Printf("[drone] start: %v", err)

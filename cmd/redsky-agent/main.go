@@ -2451,7 +2451,17 @@ func runDrone(conn net.Conn, sess *crypto.Session, d proto.DroneStart) {
 		send(proto.DroneData{Frames: lines})
 
 	case "heartbeat":
-		f, err := drone.Heartbeat(d.SysID, d.CompID, seq)
+		var f []byte
+		var err error
+		if d.UseV2 {
+			var key []byte
+			if d.SigKeyHex != "" {
+				key = hexDecode(d.SigKeyHex)
+			}
+			f, err = drone.HeartbeatV2(d.SysID, d.CompID, seq, key, d.LinkID)
+		} else {
+			f, err = drone.Heartbeat(d.SysID, d.CompID, seq)
+		}
 		if err != nil {
 			send(proto.DroneData{Error: err.Error(), Done: true})
 			return
@@ -2467,7 +2477,17 @@ func runDrone(conn net.Conn, sess *crypto.Session, d proto.DroneStart) {
 		for i := 0; i < len(d.Params) && i < 7; i++ {
 			params[i] = d.Params[i]
 		}
-		f, err := drone.CommandLong(d.SysID, d.CompID, seq, d.TargetSys, d.TargetComp, d.Command, params, 0)
+		var f []byte
+		var err error
+		if d.UseV2 {
+			var key []byte
+			if d.SigKeyHex != "" {
+				key = hexDecode(d.SigKeyHex)
+			}
+			f, err = drone.CommandLongV2(d.SysID, d.CompID, seq, d.TargetSys, d.TargetComp, d.Command, params, 0, key, d.LinkID)
+		} else {
+			f, err = drone.CommandLong(d.SysID, d.CompID, seq, d.TargetSys, d.TargetComp, d.Command, params, 0)
+		}
 		if err != nil {
 			send(proto.DroneData{Error: err.Error(), Done: true})
 			return
@@ -2554,4 +2574,35 @@ func hexBytes(b []byte) string {
 		out[i*2+1] = hexdigits[x&0x0F]
 	}
 	return string(out)
+}
+
+// hexDecode is a small hex decoder for the drone signature key flag.
+func hexDecode(s string) []byte {
+	s = strings.ReplaceAll(s, " ", "")
+	if len(s)%2 != 0 {
+		return nil
+	}
+	out := make([]byte, len(s)/2)
+	for i := 0; i < len(out); i++ {
+		hi := hexNibble(s[i*2])
+		lo := hexNibble(s[i*2+1])
+		if hi < 0 || lo < 0 {
+			return nil
+		}
+		out[i] = byte(hi<<4 | lo)
+	}
+	return out
+}
+
+// hexNibble converts a single hex char to its value, -1 on bad input.
+func hexNibble(c byte) int {
+	switch {
+	case c >= '0' && c <= '9':
+		return int(c - '0')
+	case c >= 'a' && c <= 'f':
+		return int(c-'a') + 10
+	case c >= 'A' && c <= 'F':
+		return int(c-'A') + 10
+	}
+	return -1
 }

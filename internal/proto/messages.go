@@ -827,6 +827,9 @@ type DroneStart struct {
 	// goto
 	Lat, Lon, Alt float32 `json:"lat,omitempty"`
 	Vx, Vy, Vz    float32 `json:"vx,omitempty"`
+	UseV2         bool    `json:"use_v2,omitempty"`
+	SigKeyHex     string  `json:"sig_key_hex,omitempty"`
+	LinkID        uint8   `json:"link_id,omitempty"`
 }
 
 // DroneData streams results back.
