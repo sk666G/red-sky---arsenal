@@ -30,8 +30,8 @@ def run_cli(args: List[str]) -> int:
         return int(_f(args[1:]))
 
     if sub in ("lockbypass", "lock", "l"):
-        print_info("physical lockbypass: not yet wired — coming in this build")
-        return 0
+        from .lockbypass import run_cli as _f
+        return int(_f(args[1:]))
     if sub in ("usb_drop", "usb", "u"):
         print_info("physical usb_drop: not yet wired — coming in this build")
         return 0
