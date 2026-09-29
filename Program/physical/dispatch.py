@@ -7,17 +7,13 @@ from Program.utils import print_info, print_err
 def _usage():
     print_info("redsky physical <sub-command> [args...]")
     print_info("")
-    print_info("  rfid <info|read|write|emulate|list|tools> [lf|hf|mf] [--dump file]")
-    print_info("      proxmark3-driven tag read/dump/clone/emulate")
+    print_info("  rfid detect")
+    print_info("  rfid read [--keys FILE]")
+    print_info("  rfid clone --dump FILE [--keys FILE]")
+    print_info("      MIFARE Classic read/clone via proxmark3 or PN532")
     print_info("")
-    print_info("  lock <catalog|blanks|cut-sheet> [--filter X] [--code KW1 --cuts 3-5-2-1-4]")
-    print_info("      lock bypass reference + key blank dimensions + cut sheets")
-    print_info("")
-    print_info("  usb_drop <list|gen> [payload|all] [--target ducky|digispark|p4wnp1|all]")
-    print_info("      generate HID-drop payloads for Ducky / Digispark / P4wnP1 / O.MG")
-    print_info("")
-    print_info("  badge_clone <read|decode|encode|write|emulate> --type hid|em|iclass|mifare")
-    print_info("      HID Prox / iCLASS / EM4100 badge read/clone/emulate")
+    print_info("  lockbypass ...      (coming)")
+    print_info("  usb_drop ...        (coming)")
 
 
 def run_cli(args: List[str]) -> int:
@@ -29,18 +25,16 @@ def run_cli(args: List[str]) -> int:
         _usage()
         return 0
 
-    if sub in ("rfid", "nfc", "r"):
+    if sub in ("rfid", "r"):
         from .rfid import run_cli as _f
         return int(_f(args[1:]))
-    if sub in ("lock", "lockpick", "l"):
-        from .lock import run_cli as _f
-        return int(_f(args[1:]))
-    if sub in ("usb_drop", "usb", "drop", "u"):
-        from .usb_drop import run_cli as _f
-        return int(_f(args[1:]))
-    if sub in ("badge_clone", "badge", "b"):
-        from .badge_clone import run_cli as _f
-        return int(_f(args[1:]))
+
+    if sub in ("lockbypass", "lock", "l"):
+        print_info("physical lockbypass: not yet wired — coming in this build")
+        return 0
+    if sub in ("usb_drop", "usb", "u"):
+        print_info("physical usb_drop: not yet wired — coming in this build")
+        return 0
 
     print_err("unknown physical sub-command: " + sub)
     _usage()

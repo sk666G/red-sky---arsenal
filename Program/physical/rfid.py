@@ -1,307 +1,332 @@
-# language: Python, file: Program/physical/rfid.py, target: Red Sky physical — RFID/NFC read/write/replay
-# Wraps the Proxmark3 client (`pm3`) and, when only a PC/SC reader is attached,
-# talks to it directly via nfcpy. Covers:
-#   - read  (identify card type, dump sectors, save to disk)
-#   - write (restore a dump onto a magic card)
-#   - clone (read -> write in one shot)
-#   - emulate (Proxmark3 emulation mode)
-#   - info  (one-shot tag identification, no dump)
-# Card families supported through pm3: MIFARE Classic/Ultralight/DESFire,
-# iCLASS, HID Prox (125kHz), EM4100, T5577, Hitag, Legic.
+# language: Python, file: Program/physical/rfid.py, target: Red Sky physical — RFID read/clone
+# Drives either a Proxmark3 (via the `pm3` or `proxmark3` client) or a PN532
+# (via nfc-tools: nfc-mfclassic, nfc-list). Detects which is on PATH at call
+# time; if both, prefers Proxmark.
+#
+# Outputs a card dump in both nfc-tools format (.bin + .json keys) and a
+# human-readable summary. Clones from a dump by writing sectors back with
+# the captured keys.
 
 import json
+import os
 import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from Program.theme.palette import SCARLET, ARTERY, BONE, ASH, OK, CLOT, RESET, BOLD
 from Program.utils import print_ok, print_err, print_info, print_warn, print_kv
 from Program.utils.paths import OUTPUT_DIR
 
 
-PH_DIR = OUTPUT_DIR / "physical"
-DUMP_DIR = PH_DIR / "rfid_dumps"
-DUMP_DIR.mkdir(parents=True, exist_ok=True)
+RF_DIR = OUTPUT_DIR / "physical" / "rfid"
+
+# Common MIFARE Classic default keys — every reader ships these
+DEFAULT_KEYS = [
+    "FFFFFFFFFFFF",
+    "A0A1A2A3A4A5",
+    "D3F7D3F7D3F7",
+    "000000000000",
+    "B0B1B2B3B4B5",
+    "4D3A99C351DD",
+    "1A982C7E459A",
+    "AABBCCDDEEFF",
+    "714C5C886E97",
+    "587EE5F9350F",
+    "A0478CC39091",
+    "533CB6C723F6",
+    "8FD0A4F256E9",
+]
 
 
-def _which(cmd: str) -> Optional[str]:
-    return shutil.which(cmd)
+# ── tool detection ──────────────────────────────────────────────────────────
+
+def _which(*names: str) -> Optional[str]:
+    for n in names:
+        p = shutil.which(n)
+        if p:
+            return p
+    return None
 
 
-def _run(args: List[str], timeout: int = 120, stdin: str = "") -> str:
+def detect_tool() -> Tuple[str, Optional[str]]:
+    """Returns ('proxmark'|'pn532'|'none', path)."""
+    pm = _which("pm3", "proxmark3")
+    if pm:
+        return "proxmark", pm
+    nfc = _which("nfc-mfclassic", "nfc-list")
+    if nfc:
+        return "pn532", nfc
+    return "none", None
+
+
+def _run(cmd: List[str], timeout: int = 60, input_text: str = "") -> Tuple[int, str, str]:
     try:
-        r = subprocess.run(args, capture_output=True, text=True, timeout=timeout,
-                           input=stdin if stdin else None)
-        if r.returncode != 0 and r.stderr:
-            print_warn(r.stderr.strip()[:200])
-        return r.stdout
-    except FileNotFoundError:
-        print_err("missing: " + args[0])
-        return ""
+        p = subprocess.run(
+            cmd, capture_output=True, text=True,
+            timeout=timeout, input=input_text,
+        )
+        return p.returncode, p.stdout, p.stderr
     except subprocess.TimeoutExpired:
-        print_warn("timeout on " + " ".join(args[:2]))
-        return ""
+        return 124, "", "timeout"
+    except FileNotFoundError as e:
+        return 127, "", str(e)
 
 
-# ── tool detection ──
-def find_tools() -> Dict[str, str]:
-    out = {
-        "pm3":        _which("pm3") or "",
-        "proxmark3":  _which("proxmark3") or "",
-        "nfcpy":      "",
-    }
-    # nfcpy is a python lib, check via import
-    try:
-        import nfc  # noqa: F401
-        out["nfcpy"] = "yes"
-    except ImportError:
-        out["nfcpy"] = ""
+# ── proxmark3 backend ───────────────────────────────────────────────────────
+
+def pm3_script(pm3: str, commands: List[str], timeout: int = 90) -> Tuple[int, str, str]:
+    """Feed a list of proxmark3 client commands to stdin."""
+    text = "\n".join(commands) + "\nquit\n"
+    return _run([pm3], timeout=timeout, input_text=text)
+
+
+def pm3_read(pm3: str, out_dir: Path) -> Optional[Dict]:
+    """hf mf autopwn — reads keys, dumps all sectors, writes binaries locally."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    cmds = [
+        "hf mf autopwn",
+    ]
+    rc, out, err = pm3_script(pm3, cmds, timeout=180)
+    if rc != 0:
+        print_err("proxmark autopwn rc=" + str(rc))
+        if err:
+            print_warn(err.strip().splitlines()[-1] if err.strip() else "")
+        return None
+
+    # autopwn writes dump + keys under the pm3 client's cwd — collect them
+    found = {}
+    for candidate in [
+        Path.home() / ".proxmark3" / "dumps",
+        Path.home() / ".proxmark3",
+        Path.cwd(),
+        out_dir,
+    ]:
+        if not candidate.exists():
+            continue
+        for f in candidate.glob("*.bin"):
+            found.setdefault("bin", []).append(f)
+        for f in candidate.glob("*.json"):
+            found.setdefault("json", []).append(f)
+
+    return {"raw_out": out, "raw_err": err, "files": {k: [str(p) for p in v] for k, v in found.items()}}
+
+
+def pm3_clone(pm3: str, dump_path: Path, key_path: Optional[Path]) -> bool:
+    """hf mf cload <dump> — writes an existing dump to a blank tag."""
+    if not dump_path.exists():
+        print_err("dump missing: " + str(dump_path))
+        return False
+    cmds = ["hf mf cload -f " + str(dump_path)]
+    rc, out, err = pm3_script(pm3, cmds, timeout=120)
+    if rc != 0:
+        print_err("proxmark cload rc=" + str(rc))
+        return False
+    return True
+
+
+# ── nfc-tools (PN532) backend ───────────────────────────────────────────────
+
+def pn532_list() -> Optional[str]:
+    rc, out, err = _run(["nfc-list"], timeout=15)
+    if rc != 0:
+        print_err("nfc-list rc=" + str(rc))
+        if err:
+            print_warn(err.strip())
+        return None
     return out
 
 
-def cmd_tools() -> int:
-    t = find_tools()
-    print_info("tool availability")
-    for name, path in t.items():
-        if path:
-            print("  " + SCARLET + "▓" + RESET + " " + BONE + name + RESET + "  " + ASH + path + RESET)
-        else:
-            print("  " + ASH + "░ " + name + " (missing)" + RESET)
-    print()
-    if not t["pm3"] and not t["proxmark3"]:
-        print_warn("no Proxmark3 client on PATH")
-        print_info("install: apt install proxmark3-client  (or clone RfidResearchGroup/proxmark3)")
-    if not t["nfcpy"]:
-        print_info("for ACR122U / PN532 readers: pip install nfcpy")
+def pn532_read(out_dir: Path, key_file: Optional[Path]) -> Optional[Path]:
+    """nfc-mfclassic r a <dump> <keyfile> — reads a MIFARE Classic 1K with the key file."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    dump = out_dir / ("dump_" + str(int(time.time())) + ".bin")
+
+    # if no key file provided, write a default-key file to disk first
+    if key_file is None or not key_file.exists():
+        key_file = out_dir / "default_keys.mfd"
+        # nfc-mfclassic wants a 6-byte-per-key file, 2 keys per sector (A and B)
+        # we build a file with sector-A = default A0A1A2A3A4A5, sector-B = FFFFFFFFFFFF
+        keys = b""
+        for _ in range(40):
+            keys += bytes.fromhex("A0A1A2A3A4A5") + bytes.fromhex("FFFFFFFFFFFF")
+        key_file.write_bytes(keys)
+        print_info("wrote default key file: " + str(key_file))
+
+    rc, out, err = _run(["nfc-mfclassic", "r", "a", str(dump), str(key_file)], timeout=60)
+    if rc != 0:
+        print_err("nfc-mfclassic read rc=" + str(rc))
+        if err:
+            print_warn(err.strip().splitlines()[-1] if err.strip() else "")
+        return None
+    return dump
+
+
+def pn532_clone(dump_path: Path, key_file: Optional[Path]) -> bool:
+    if not dump_path.exists():
+        print_err("dump missing: " + str(dump_path))
+        return False
+    if key_file is None or not key_file.exists():
+        print_err("clone requires --keys <file>")
+        return False
+    rc, out, err = _run(["nfc-mfclassic", "w", "a", str(dump_path), str(key_file)], timeout=60)
+    if rc != 0:
+        print_err("nfc-mfclassic write rc=" + str(rc))
+        if err:
+            print_warn(err.strip().splitlines()[-1] if err.strip() else "")
+        return False
+    return True
+
+
+# ── summary / index ─────────────────────────────────────────────────────────
+
+def write_index(out_dir: Path, tool: str, dump: Optional[Path], extra: Dict) -> Path:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    idx = out_dir / "index.json"
+    data = {
+        "tool": tool,
+        "dump": str(dump) if dump else None,
+        "ts": int(time.time()),
+        "default_keys_tried": DEFAULT_KEYS,
+        "extra": extra,
+    }
+    idx.write_text(json.dumps(data, indent=2))
+    return idx
+
+
+# ── commands ────────────────────────────────────────────────────────────────
+
+def cmd_detect() -> int:
+    tool, path = detect_tool()
+    print_info("rfid tool detection")
+    print_kv("backend", tool)
+    print_kv("path", path or "(none)")
+    if tool == "none":
+        print()
+        print_warn("install one of:")
+        print_warn("  proxmark3:  apt install proxmark3  # or build from RfidResearchGroup")
+        print_warn("  pn532:      apt install libnfc-bin libnfc-examples")
+        return 1
     return 0
 
 
-def _pm3() -> str:
-    return _which("pm3") or _which("proxmark3") or ""
-
-
-# ── Proxmark3 commands ──
-def pm3_cmd(script: str, timeout: int = 60) -> str:
-    pm = _pm3()
-    if not pm:
-        return ""
-    # pm3 supports -c "<cmd>" for one-shot command strings
-    return _run([pm, "-c", script], timeout=timeout)
-
-
-def pm3_info() -> str:
-    """Returns the 'hw version' banner — confirms the proxmark is connected."""
-    return pm3_cmd("hw version")
-
-
-def read_125khz() -> Optional[Dict]:
-    """Read a 125kHz tag (EM4100 / HID Prox / T5577)."""
-    print_info("polling 125kHz (lf search)")
-    out = pm3_cmd("lf search", timeout=60)
-    if not out:
-        print_err("no proxmark / no response")
-        return None
-    print(out)
-    # detect known formats
-    family = ""
-    for line in out.splitlines():
-        for fam in ("EM410", "HID Prox", "Indala", "T5577", "AWID", "Paradox", "Pyramid",
-                    "Viking", "Noralsy", "Securakey", "FDX-B", "Gallagher", "PAC/Stanley"):
-            if fam.lower() in line.lower():
-                family = fam
-                break
-        if family:
-            break
-    card = {"family": family or "unknown", "raw": out}
-    return card
-
-
-def read_13mhz() -> Optional[Dict]:
-    """Read a 13.56MHz tag (MIFARE / iCLASS / DESFire)."""
-    print_info("polling 13.56MHz (hf search)")
-    out = pm3_cmd("hf search", timeout=60)
-    if not out:
-        print_err("no proxmark / no response")
-        return None
-    print(out)
-    family = ""
-    for line in out.splitlines():
-        for fam in ("MIFARE Classic", "MIFARE Ultralight", "MIFARE DESFire", "iCLASS",
-                    "NTAG", "ISO 15693", "FeliCa", "Topaz", "LEGIC"):
-            if fam.lower() in line.lower():
-                family = fam
-                break
-        if family:
-            break
-    return {"family": family or "unknown", "raw": out}
-
-
-def dump_mifare_classic() -> Optional[Path]:
-    """Run the MIFARE Classic nested/darkside attack and dump all sectors."""
-    print_info("mifare classic: running autopwn to recover keys")
-    out = pm3_cmd("hf mf autopwn", timeout=900)
-    if not out:
-        return None
-
-    # pm3 autopwn saves <uid>.bin and .json under the client's working dir
-    # find the newest pair
-    now = time.time()
-    candidates = []
-    for p in Path(".").rglob("*.bin"):
-        if now - p.stat().st_mtime < 900:
-            candidates.append(p)
-    if not candidates:
-        print_warn("no dump file written — check pm3 output above")
-        return None
-
-    newest = max(candidates, key=lambda p: p.stat().st_mtime)
-    dst = DUMP_DIR / newest.name
-    shutil.copy2(newest, dst)
-    print_ok("dump saved: " + str(dst))
-    # also copy the .json keys file if present
-    keys_json = newest.with_suffix(".json")
-    if keys_json.exists():
-        shutil.copy2(keys_json, DUMP_DIR / keys_json.name)
-        print_ok("keys saved: " + str(DUMP_DIR / keys_json.name))
-    return dst
-
-
-def write_from_dump(dump_file: str, confirm_magic: bool) -> int:
-    """Restore a .bin dump to a blank / magic card."""
-    if not confirm_magic:
-        print_warn("writing requires a 'magic' card (gen1a / gen2 / gen3) or a blank tag")
-        print_info("rerun with --magic-confirmed to proceed")
-        return 2
-
-    src = Path(dump_file).expanduser()
-    if not src.exists():
-        print_err("dump file not found: " + str(src))
+def cmd_read(keys: Optional[str]) -> int:
+    tool, path = detect_tool()
+    if tool == "none":
+        print_err("no rfid backend on PATH — run `redsky physical rfid detect`")
         return 1
 
-    uid = src.stem
-    print_info("writing dump " + str(src) + " to tag (uid " + uid + ")")
-    out = pm3_cmd("hf mf restore --uid " + uid + " f " + str(src), timeout=300)
-    print(out)
-    print_ok("restore attempted — verify with `redsky physical rfid info hf`")
-    return 0
+    RF_DIR.mkdir(parents=True, exist_ok=True)
+    key_path = Path(keys) if keys else None
 
-
-def emulate_from_dump(dump_file: str) -> int:
-    """Proxmark3 emulates a MIFARE Classic using a dump file."""
-    src = Path(dump_file).expanduser()
-    if not src.exists():
-        print_err("dump file not found: " + str(src))
-        return 1
-    uid = src.stem
-    print_info("emulating " + uid + " (CTRL+C to stop)")
-    pm = _pm3()
-    if not pm:
-        return 2
-    try:
-        subprocess.run([pm, "-c", "hf mf sim --uid " + uid])
-    except KeyboardInterrupt:
-        print_info("emulation stopped")
-    return 0
-
-
-def cmd_info(band: str) -> int:
-    if band in ("lf", "125", "both"):
-        card = read_125khz()
-        if card:
-            print()
-            print_ok("125kHz tag: " + card["family"])
-    if band in ("hf", "1356", "13.56", "both"):
-        card = read_13mhz()
-        if card:
-            print()
-            print_ok("13.56MHz tag: " + card["family"])
-    return 0
-
-
-def cmd_read(band: str, name: str) -> int:
-    if band == "lf":
-        card = read_125khz()
-        if not card:
-            return 1
-        out = DUMP_DIR / ((name or "lf_" + str(int(time.time()))) + ".json")
-        out.write_text(json.dumps(card, indent=2))
-        print_kv("saved", out)
-        return 0
-    if band == "hf":
-        card = read_13mhz()
-        if not card:
-            return 1
-        out = DUMP_DIR / ((name or "hf_" + str(int(time.time()))) + ".json")
-        out.write_text(json.dumps(card, indent=2))
-        print_kv("saved", out)
-        return 0
-    if band == "mf":
-        d = dump_mifare_classic()
-        return 0 if d else 1
-    print_err("unknown band: " + band + " (lf | hf | mf)")
-    return 2
-
-
-def cmd_list() -> int:
-    dumps = sorted(DUMP_DIR.glob("*"))
-    if not dumps:
-        print_info("no dumps yet")
-        return 0
-    print_info(str(len(dumps)) + " file(s) in " + str(DUMP_DIR))
+    print_info("rfid read")
+    print_kv("backend", tool)
     print()
-    for d in dumps:
-        sz = d.stat().st_size
-        print("  " + BONE + d.name + RESET + "  " + ASH + str(sz) + " bytes" + RESET)
+
+    if tool == "proxmark":
+        res = pm3_read(path, RF_DIR)
+        if not res:
+            return 1
+        print_ok("read complete")
+        if res.get("files"):
+            for kind, paths in res["files"].items():
+                for p in paths:
+                    print_kv(kind, p)
+        idx = write_index(RF_DIR, tool, None, res)
+        print_kv("index", idx)
+        return 0
+
+    # pn532
+    dump = pn532_read(RF_DIR, key_path)
+    if not dump:
+        return 1
+    print_ok("dump written: " + str(dump))
+    idx = write_index(RF_DIR, tool, dump, {})
+    print_kv("index", idx)
     return 0
 
+
+def cmd_clone(dump: str, keys: Optional[str]) -> int:
+    tool, path = detect_tool()
+    if tool == "none":
+        print_err("no rfid backend on PATH")
+        return 1
+
+    dump_path = Path(dump)
+    if not dump_path.exists():
+        print_err("dump not found: " + dump)
+        return 1
+
+    key_path = Path(keys) if keys else None
+
+    print_info("rfid clone")
+    print_kv("backend", tool)
+    print_kv("dump", dump_path)
+    print_kv("keys", key_path or "(default)")
+    print()
+
+    ok = False
+    if tool == "proxmark":
+        ok = pm3_clone(path, dump_path, key_path)
+    else:
+        ok = pn532_clone(dump_path, key_path)
+
+    if ok:
+        print_ok("clone written")
+        return 0
+    return 1
+
+
+# ── cli ─────────────────────────────────────────────────────────────────────
 
 def run_cli(args):
     import argparse
     p = argparse.ArgumentParser(prog="redsky physical rfid", add_help=False)
     p.add_argument("-h", "--help", action="store_true")
-    p.add_argument("action", nargs="?", default="info",
-                   choices=["info", "read", "write", "emulate", "list", "tools"])
-    p.add_argument("band", nargs="?", default="both")
-    p.add_argument("--name", default="")
-    p.add_argument("--dump", default="")
-    p.add_argument("--magic-confirmed", action="store_true")
+    sub = args[0] if args else "detect"
+    rest = args[1:] if args else []
 
-    try:
-        ns = p.parse_args(args)
-    except SystemExit:
-        print_err("usage: redsky physical rfid <info|read|write|emulate|list|tools> [band|file]")
-        return 2
-
-    if ns.help:
-        print_info("tools                                       -- show pm3 / nfcpy availability")
-        print_info("info  <lf|hf|both>                          -- identify a tag")
-        print_info("read  <lf|hf|mf> [--name X]                 -- dump tag / MIFARE Classic autopwn")
-        print_info("write --dump <file> --magic-confirmed       -- restore a dump onto a magic tag")
-        print_info("emulate --dump <file>                       -- proxmark sim mode")
-        print_info("list                                        -- show all dumps")
+    if sub in ("-h", "--help"):
+        print_info("redsky physical rfid <sub-command>")
+        print_info("")
+        print_info("  detect")
+        print_info("      show which rfid backend is installed")
+        print_info("  read [--keys FILE]")
+        print_info("      proxmark: hf mf autopwn   |   pn532: nfc-mfclassic r a")
+        print_info("  clone --dump FILE [--keys FILE]")
+        print_info("      proxmark: hf mf cload     |   pn532: nfc-mfclassic w a")
         return 0
 
-    if ns.action == "tools":
-        return cmd_tools()
-    if ns.action == "list":
-        return cmd_list()
-    if ns.action == "info":
-        return cmd_info(ns.band)
-    if ns.action == "read":
-        return cmd_read(ns.band, ns.name)
-    if ns.action == "write":
-        if not ns.dump:
-            print_err("--dump <file> required")
+    if sub == "detect":
+        return cmd_detect()
+
+    if sub == "read":
+        p2 = argparse.ArgumentParser(prog="redsky physical rfid read", add_help=False)
+        p2.add_argument("--keys", default="")
+        try:
+            ns = p2.parse_args(rest)
+        except SystemExit:
+            print_err("usage: redsky physical rfid read [--keys FILE]")
             return 2
-        return write_from_dump(ns.dump, ns.magic_confirmed)
-    if ns.action == "emulate":
-        if not ns.dump:
-            print_err("--dump <file> required")
+        return cmd_read(ns.keys or None)
+
+    if sub in ("clone", "write"):
+        p2 = argparse.ArgumentParser(prog="redsky physical rfid clone", add_help=False)
+        p2.add_argument("--dump", required=False, default="")
+        p2.add_argument("--keys", default="")
+        try:
+            ns = p2.parse_args(rest)
+        except SystemExit:
+            print_err("usage: redsky physical rfid clone --dump FILE [--keys FILE]")
             return 2
-        return emulate_from_dump(ns.dump)
+        if not ns.dump:
+            print_err("--dump required")
+            return 2
+        return cmd_clone(ns.dump, ns.keys or None)
+
+    print_err("unknown rfid sub-command: " + sub)
     return 2
 
 
