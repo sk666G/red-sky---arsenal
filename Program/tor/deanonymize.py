@@ -1,27 +1,30 @@
-# language: Python, file: Program/tor/deanonymize.py, target: Red Sky tor — deanonymization probes
-# Reference + detection toolkit for deanonymization surfaces:
-#   exit-fingerprint  -- compare response headers / behaviour across exits to
-#                        identify which exit node a target is using
-#   browser-detect    -- query a target Tor page for Tor Browser fingerprints
-#                        (window size, JS timing, WebRTC leaks, canvas)
-#   clock-skew        -- measure clock skew of a target service over Tor; helps
-#                        correlate a hidden service with a clearnet host
-#   correlation-plan  -- the scaffold for a timing-correlation attack (lab only)
-#   guard-detect      -- given a suspected guard, check if it's live in the
-#                        current consensus and its recent uptime
+# language: Python, file: Program/tor/deanonymize.py, target: Red Sky tor — deanonymization research
+# Deanonymization technique catalog + a couple of operational drivers.
+#
+# Real deanonymization of Tor requires either:
+#   - massive network observation (AS-level, IXP taps) — nation-state tier
+#   - running many relays (Sybil) — costly, mitigated by guard rotation
+#   - breaking entry guards via targeted resource exhaustion
+#   - traffic correlation with timing precision at <100ms on both ends
+#
+# None of these fit a single box. The catalog below is the honest map of
+# what each family needs and where it fails. The drivers we ship are the
+# parts that work from one vantage point:
+#
+#   relay-check    — is IP X a known Tor relay/exit/guard? (fetches consensus)
+#   fingerprint    — passive site-fingerprinting histogram collection
+#   exit-detect    — probe an exit's behaviour on a target domain
 
-import argparse
+import base64
+import hashlib
 import json
-import re
 import socket
 import ssl
 import sys
 import time
-from datetime import datetime, timezone
+from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-
-import requests
 
 from Program.theme.palette import SCARLET, ARTERY, BONE, ASH, OK, CLOT, RESET, BOLD
 from Program.utils import print_ok, print_err, print_info, print_warn, print_kv
@@ -29,383 +32,281 @@ from Program.utils.paths import OUTPUT_DIR
 
 
 TOR_DIR = OUTPUT_DIR / "tor"
-DEAN_DIR = TOR_DIR / "deanon"
-DEAN_DIR.mkdir(parents=True, exist_ok=True)
+DEANON_DIR = TOR_DIR / "deanon"
 
 
-# ── exit fingerprint ──
-# Tor exits don't relay the client's IP, but they DO add headers and respond
-# differently depending on their host + ISP. Cross-reference a target's traffic
-# against every exit in the consensus by hitting a canary service through each
-# exit and comparing the header set the target shows.
-def cmd_exit_fingerprint(url: str, canary: str, out_file: str) -> int:
-    """Hits the canary (a service the target also visits) through every exit
-    in the current consensus. Records the response headers. Useful to identify
-    which exit a given client is using when a target service reports anomalies
-    originating from a specific exit."""
-    if not url:
-        print_err("--url required (target service to fingerprint)")
-        return 2
-    canary = canary or "https://check.torproject.org/api/ip"
+CATALOG: Dict[str, Dict] = {
+    "exit_correlation": {
+        "title": "Exit node traffic correlation",
+        "needs": "Observation of the client's ingress to Tor AND the exit's egress to the destination.",
+        "what_it_gets": "Client IP ↔ destination server, if you can see both ends of the circuit.",
+        "why_hard": [
+            "Requires passive taps on both the entry path and the exit path. Realistically two different network operators.",
+            "Padding, cell timing obfuscation, and the variable latency through 3 hops makes correlation statistical, not deterministic.",
+            "Papers (Murdoch & Danezis 2005) report 90%+ accuracy with 10-30 minutes of flow, but that is lab conditions with no network jitter.",
+        ],
+    },
+    "website_fingerprinting": {
+        "title": "Website fingerprinting (WF)",
+        "needs": "Observation of the encrypted Tor stream itself, plus a labeled training set.",
+        "what_it_gets": "Which site the client is visiting — not their identity.",
+        "why_hard": [
+            "Deep learning WF attacks (DF, Var-CNN, Tik-Tok) can hit 80-95% on closed-world datasets.",
+            "Open-world (is this one of 100k sites) tops out around 60-70% for state-of-the-art.",
+            "Mitigations: WTF-PAD, Walkie-Talkie, and the Tor Project's own traffic shaping reduce success dramatically.",
+            "Requires large labeled capture corpus per target site — feasible for a specific target, not general.",
+        ],
+    },
+    "timing_correlation": {
+        "title": "Timing correlation (end-to-end RTT)",
+        "needs": "Latency measurement at the client AND at the destination simultaneously.",
+        "what_it_gets": "Links the client and the destination with high probability if the pattern matches.",
+        "why_hard": [
+            "Requires a live adversary on both ends (usually AS-level adversary or a compromised IXP).",
+            "Cell-by-cell RTT variance through Tor is on the order of 10-100ms — you need <10ms accuracy to correlate.",
+            "Tor's circuit padding and per-cell delay randomization help but are not designed as a full mitigation.",
+        ],
+    },
+    "sybil": {
+        "title": "Sybil relays / guard discovery",
+        "needs": "Running enough relays that a target client picks yours as a guard, OR a targeted DoS on the guard.",
+        "what_it_gets": "The client's entry guard, and if it is your relay, the client's IP.",
+        "why_hard": [
+            "Tor's guard rotation is 2-3 months per guard. Running enough relays to statistically land on one client costs money and time.",
+            "Guard discovery DoS (DDoS a target's guard until it fails, observe the new guard) has been mitigated by Tor since ~2018 with a fix to guard pinning.",
+            "Congestion control (proposal 324) and circuit-level mitigations have closed most of the surface.",
+        ],
+    },
+    "descriptor_analysis": {
+        "title": "Hidden service descriptor analysis",
+        "needs": "The HS descriptor itself plus on-chain address correlation, or a directory-cache position.",
+        "what_it_gets": "Rough activity patterns of the HS, sometimes the guard set which can be lifted to the operator.",
+        "why_hard": [
+            "v3 onion services rotate descriptors every 24h and split them across 2 HSDirs.",
+            "Guard-based HS deanonymization (Cao et al. 2020) requires 3-6 months of running dozens of HSDir relays.",
+        ],
+    },
+    "osint": {
+        "title": "OSINT / leak correlation",
+        "needs": "Nothing technical — just a search engine and patience.",
+        "what_it_gets": "The operator's real identity if they reused a username, email, or crypto address tied to their Tor persona.",
+        "why_hard": [
+            "This is the family most often successful — because people leak their own identity, not because Tor fails.",
+            "Typical leak vector: same PGP key, same BTC address, same handle reused elsewhere, or a fingerprint from a screenshot.",
+        ],
+    },
+}
 
-    print_info("exit fingerprint")
-    print_kv("target", url)
-    print_kv("canary", canary)
-    print()
 
-    # get the exit list from the Tor project's onionedoo (public consensus)
-    print_info("fetching exit list ...")
+# ── consensus / relay lookup ───────────────────────────────────────────────
+
+CONSENSUS_URL = "https://onionoo.torproject.org/details?search="
+
+
+def _http_get(url: str, timeout: int = 10) -> Optional[str]:
     try:
-        r = requests.get("https://onionoo.torproject.org/details",
-                         params={"type": "relay", "flag": "Exit", "limit": 500},
-                         timeout=20)
-        r.raise_for_status()
-        relays = r.json().get("relays", [])
-    except Exception as e:
-        print_err("could not fetch relays: " + str(e))
-        return 1
-
-    print_kv("exit relays", len(relays))
-    print()
-
-    # sample a handful of exits — running through all of them would take hours
-    sample = relays[:20]
-    fingerprints = []
-    for r in sample:
-        fp = r.get("fingerprint", "")
-        nickname = r.get("nickname", "")
-        country = r.get("country", "")
-        asn = r.get("as", "")
-        # try to hit the canary through this specific exit
-        # note: this needs a running tor with `ExitNodes=$FP StrictNodes=1`
-        # the module just records the fingerprint metadata for correlation
-        fingerprints.append({
-            "fingerprint": fp, "nickname": nickname,
-            "country": country, "as": asn,
-            "as_name": r.get("as_name", ""),
-            "or_addresses": r.get("or_addresses", []),
+        import requests
+    except ImportError:
+        return None
+    try:
+        r = requests.get(url, timeout=timeout, headers={
+            "User-Agent": "red-sky tor / 1.0",
         })
-
-    print_info("sampled exits (metadata for correlation)")
-    for f in fingerprints[:10]:
-        print("  " + SCARLET + "*" + RESET + " " + BONE + f["nickname"].ljust(20) + RESET
-              + " " + ARTERY + f["fingerprint"][:16] + "..." + RESET
-              + " " + ASH + f["country"] + "  " + f["as_name"][:40] + RESET)
-
-    out = Path(out_file) if out_file else DEAN_DIR / ("exits_" + str(int(time.time())) + ".json")
-    out.write_text(json.dumps({"target": url, "canary": canary, "exits": fingerprints}, indent=2))
-    print()
-    print_kv("saved", out)
-    print()
-    print_info("to actually fingerprint, set ExitNodes=$FP StrictNodes=1 in the")
-    print_info("tor circuit module and hit the canary through each exit.")
-    return 0
-
-
-# ── browser detect ──
-JS_PROBE = r"""
-// Injected into a page to fingerprint the browser. Fires one POST with the
-// results so the operator can see Tor Browser vs a regular browser.
-(function() {
-  const out = {};
-  out.screen_w = window.screen.width;
-  out.screen_h = window.screen.height;
-  out.window_w = window.innerWidth;
-  out.window_h = window.innerHeight;
-  out.devicePixelRatio = window.devicePixelRatio;
-  out.timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  out.language = navigator.language;
-  out.languages = navigator.languages;
-  out.platform = navigator.platform;
-  out.hardwareConcurrency = navigator.hardwareConcurrency;
-  out.deviceMemory = navigator.deviceMemory;
-  out.userAgent = navigator.userAgent;
-  out.maxTouchPoints = navigator.maxTouchPoints;
-  out.doNotTrack = navigator.doNotTrack;
-  out.cookiesEnabled = navigator.cookiesEnabled;
-  // canvas fingerprint
-  try {
-    const c = document.createElement('canvas');
-    const ctx = c.getContext('2d');
-    ctx.textBaseline = 'top';
-    ctx.font = '14px Arial';
-    ctx.fillText('Fingerprint!', 2, 2);
-    out.canvas = c.toDataURL().slice(-50);
-  } catch(e) { out.canvas = 'err'; }
-  // WebGL
-  try {
-    const gl = document.createElement('canvas').getContext('webgl');
-    const dbg = gl.getExtension('WEBGL_debug_renderer_info');
-    out.webgl_vendor = gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL);
-    out.webgl_renderer = gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL);
-  } catch(e) { out.webgl = 'err'; }
-  // WebRTC leak (should be disabled on Tor Browser)
-  try {
-    const pc = new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]});
-    pc.createDataChannel('');
-    pc.onicecandidate = e => {
-      if (!e.candidate) return;
-      out.webrtc_candidate = e.candidate.candidate;
-    };
-    pc.createOffer().then(o => pc.setLocalDescription(o));
-  } catch(e) { out.webrtc = 'err'; }
-
-  // timing
-  const t0 = performance.now();
-  for (let i = 0; i < 100000; i++) {}
-  out.timing_100k = performance.now() - t0;
-
-  // POST back
-  fetch('/fingerprint', { method: 'POST', body: JSON.stringify(out) }).catch(()=>{});
-})();
-"""
-
-
-def cmd_browser_detect(port: int, out_dir: str) -> int:
-    """Write a page + local HTTP server that captures browser fingerprint
-    telemetry. Point a Tor Browser session at it and read the results.
-    Real Tor Browser will show uniform fingerprints; a user who leaked their
-    real browser (or a relay that modified the connection) shows up distinct."""
-    target = Path(out_dir) if out_dir else DEAN_DIR / "browser-detect"
-    target.mkdir(parents=True, exist_ok=True)
-
-    (target / "index.html").write_text(
-        "<!doctype html><html><head><meta charset='utf-8'>"
-        "<title>loading</title></head><body>"
-        "<script>" + JS_PROBE + "</script>"
-        "<noscript>JavaScript required.</noscript>"
-        "</body></html>"
-    )
-
-    server = '''# language: Python, file: detect_server.py, target: Red Sky tor — browser fingerprint server
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
-import json, time
-
-ROOT = Path(__file__).parent
-INDEX = (ROOT / "index.html").read_bytes()
-HITS = ROOT / "hits.jsonl"
-
-class H(BaseHTTPRequestHandler):
-    def log_message(self, *a): pass
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(INDEX)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(INDEX)
-    def do_POST(self):
-        n = int(self.headers.get("Content-Length", "0") or 0)
-        body = self.rfile.read(n).decode("utf-8", "replace") if n else "{}"
-        rec = {"ip": self.client_address[0], "ts": time.time(), "ua": self.headers.get("User-Agent", "")}
-        try:
-            rec["fp"] = json.loads(body)
-        except Exception:
-            rec["fp_raw"] = body[:4096]
-        with HITS.open("a") as f:
-            f.write(json.dumps(rec) + "\\n")
-        print("[fp]", rec["ip"], rec["fp"].get("userAgent", "")[:80])
-        self.send_response(204)
-        self.end_headers()
-
-if __name__ == "__main__":
-    import sys
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8080
-    print(f"listening on 0.0.0.0:{port}")
-    ThreadingHTTPServer(("0.0.0.0", port), H).serve_forever()
-'''
-    (target / "detect_server.py").write_text(server)
-
-    print_ok("wrote " + str(target / "index.html"))
-    print_ok("wrote " + str(target / "detect_server.py"))
-    print()
-    print_info("run on port " + str(port) + ": python3 " + str(target / "detect_server.py") + " " + str(port))
-    print_info("expose via an .onion, then point a session at it")
-    print_info("read hits from " + str(target / "hits.jsonl"))
-    return 0
-
-
-# ── clock skew ──
-def fetch_server_date(url: str, timeout: float = 10.0) -> Optional[Dict]:
-    try:
-        r = requests.get(url, timeout=timeout, allow_redirects=True)
-        date_hdr = r.headers.get("Date", "")
-        server_hdr = r.headers.get("Server", "")
-        if not date_hdr:
-            return None
-        # parse RFC 7231 date: "Tue, 15 Nov 1994 08:12:31 GMT"
-        dt = datetime.strptime(date_hdr, "%a, %d %b %Y %H:%M:%S %Z").replace(tzinfo=timezone.utc)
-        return {
-            "server_date": date_hdr,
-            "server_time_unix": dt.timestamp(),
-            "server_hdr": server_hdr,
-            "local_time_unix": time.time(),
-        }
+        if r.status_code == 200:
+            return r.text
+        return None
     except Exception:
         return None
 
 
-def cmd_clock_skew(targets_file: str, out_file: str) -> int:
-    """For each target, measure (server_time - local_time) as a proxy for the
-    server's clock drift. Different hosting environments have characteristic
-    skews; identical skew across two services suggests same machine."""
-    if not targets_file:
-        print_err("--targets file required (one URL per line)")
-        return 2
-    p = Path(targets_file).expanduser()
-    if not p.exists():
-        print_err("targets file not found")
+def cmd_relay_check(ip: str, port: int) -> int:
+    """Check if an IP:port is listed in the Tor relay consensus."""
+    if not ip:
+        print_err("--ip required")
         return 1
-
-    urls = [l.strip() for l in p.read_text().splitlines() if l.strip() and not l.startswith("#")]
-    print_info("clock skew measurement")
-    print_kv("targets", len(urls))
+    print_info("relay check")
+    print_kv("ip", ip)
+    print_kv("port", port)
     print()
 
-    results = []
-    for url in urls:
-        r = fetch_server_date(url)
-        if not r:
-            print_warn("no Date header: " + url)
-            continue
-        skew = r["server_time_unix"] - r["local_time_unix"]
-        result = {"url": url, "skew_seconds": round(skew, 3), **r}
-        results.append(result)
-        print("  " + SCARLET + "*" + RESET + " " + BONE + url[:50].ljust(50) + RESET
-              + "  skew=" + ARTERY + "{:+.3f}s".format(skew) + RESET
-              + "  " + ASH + r["server_hdr"][:30] + RESET)
-
-    out = Path(out_file) if out_file else DEAN_DIR / ("skew_" + str(int(time.time())) + ".json")
-    out.write_text(json.dumps(results, indent=2))
-    print()
-    print_kv("saved", out)
-    return 0
-
-
-# ── correlation plan ──
-def cmd_correlation_plan(service: str, suspect: str, out_file: str) -> int:
-    print_info("timing-correlation attack plan")
-    print_kv("hidden service", service or "(specify)")
-    print_kv("suspected host", suspect or "(specify)")
-    print()
-    print(BOLD + "Objective" + RESET)
-    print("  Correlate traffic to an .onion service with traffic to a specific")
-    print("  clearnet IP, to deanonymize the host.")
-    print()
-    print(BOLD + "Preconditions" + RESET)
-    print("  " + ARROW + " you can watch netflow / packet timing on both sides")
-    print("  " + ARROW + " OR you control an ISP-adjacent vantage on the suspected host")
-    print("  " + ARROW + " the .onion service has enough user traffic for signals to emerge")
-    print()
-    print(BOLD + "Method" + RESET)
-    print("  1. capture packet timing at the suspected host (cleanet)")
-    print("  2. capture packet timing of a client's Tor circuit into the hidden service")
-    print("  3. if the two streams are correlated (same bursts, same gaps), the")
-    print("     suspected host is the hidden service")
-    print()
-    print(BOLD + "Notes" + RESET)
-    print("  " + ARROW + "Tor adds padding + variable delays between onion hops")
-    print("  " + ARROW + "correlation requires many samples and low-noise conditions")
-    print("  " + ARROW + "this is a lab method — running it against real traffic is")
-    print("     almost certainly illegal without explicit authorization")
-
-    plan = {"service": service, "suspect": suspect, "steps": [
-        "capture host-side timings", "capture client-side timings",
-        "compute cross-correlation", "compare to baseline",
-    ]}
-    out = Path(out_file) if out_file else DEAN_DIR / ("correlation_" + str(int(time.time())) + ".json")
-    out.write_text(json.dumps(plan, indent=2))
-    print()
-    print_kv("saved", out)
-    return 0
-
-
-# ── guard detect ──
-def cmd_guard_detect(fingerprint: str, out_file: str) -> int:
-    """Check whether a given fingerprint is a live relay in the current Tor
-    consensus, and pull its metadata (nickname, AS, country, uptime)."""
-    if not fingerprint:
-        print_err("--fingerprint required (40 hex chars)")
-        return 2
-
-    fp = fingerprint.strip("$").upper()
-    print_info("guard/relay lookup")
-    print_kv("fingerprint", fp)
-    print()
-
+    # search onionoo
+    url = "https://onionoo.torproject.org/details?search=" + ip
+    body = _http_get(url)
+    if body is None:
+        print_err("onionoo unreachable")
+        return 1
     try:
-        r = requests.get("https://onionoo.torproject.org/details",
-                         params={"lookup": fp}, timeout=20)
-        r.raise_for_status()
-        data = r.json()
+        data = json.loads(body)
     except Exception as e:
-        print_err("relay lookup failed: " + str(e))
+        print_err("parse: " + str(e))
         return 1
 
     relays = data.get("relays", [])
     if not relays:
-        print_warn("no relay with that fingerprint")
+        print_info("not a known Tor relay")
         return 1
 
-    r = relays[0]
-    print_ok("relay found")
-    for k in ("nickname", "fingerprint", "or_addresses", "country",
-              "as", "as_name", "flags", "first_seen", "last_seen",
-              "running", "observed_bandwidth", "consensus_weight"):
-        v = r.get(k)
-        if v:
-            print("  " + ARTERY + k.ljust(22) + RESET + BONE + str(v)[:80] + RESET)
+    for r in relays[:5]:
+        print_ok("relay")
+        print_kv("fingerprint", r.get("fingerprint", ""))
+        print_kv("nickname", r.get("nickname", ""))
+        print_kv("or_addresses", r.get("or_addresses", []))
+        flags = r.get("flags", [])
+        print_kv("flags", ", ".join(flags))
+        is_exit = "Exit" in flags
+        is_guard = "Guard" in flags
+        is_hsdir = "HSDir" in flags
+        print_kv("role", ", ".join(
+            x for x, y in (("exit", is_exit), ("guard", is_guard), ("hsdir", is_hsdir)) if y
+        ) or "relay")
+        print_kv("country", r.get("country", r.get("country_name", "")))
+        print_kv("as_name", r.get("as_name", ""))
+        print()
 
-    out = Path(out_file) if out_file else DEAN_DIR / ("guard_" + fp + ".json")
-    out.write_text(json.dumps(r, indent=2))
-    print()
+    out = DEANON_DIR / ("relay_" + ip.replace(".", "_") + "_" + str(int(time.time())) + ".json")
+    DEANON_DIR.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(relays, indent=2))
     print_kv("saved", out)
     return 0
 
 
-ARROW = SCARLET + "▸" + RESET
+# ── fingerprinting driver ─────────────────────────────────────────────────
+
+def cmd_fingerprint(host: str, port: int, samples: int, out: str) -> int:
+    """Connect repeatedly to a SOCKS proxy (Tor default 127.0.0.1:9050),
+    request a fixed URL, record the encrypted byte-count + timing histogram.
+    Useful for building a per-site fingerprint database for WF research."""
+    if not host or not port:
+        print_err("--host and --port required")
+        return 1
+    DEANON_DIR.mkdir(parents=True, exist_ok=True)
+    print_info("site fingerprint (SOCKS)")
+    print_kv("proxy", host + ":" + str(port))
+    print_kv("samples", samples)
+    print()
+
+    # Simple SOCKS5 CONNECT via our own handshake (no pysocks dep)
+    results = []
+    for i in range(samples):
+        t0 = time.time()
+        try:
+            s = socket.create_connection((host, port), timeout=10)
+            # SOCKS5 hello
+            s.sendall(b"\x05\x01\x00")
+            s.recv(2)
+            # request example.com:80
+            host_b = host.encode() if False else b"example.com"
+            req = b"\x05\x01\x00\x03" + bytes([len(host_b)]) + host_b + (80).to_bytes(2, "big")
+            s.sendall(req)
+            resp = s.recv(10)
+            # send HTTP GET
+            s.sendall(b"GET / HTTP/1.0\r\nHost: example.com\r\n\r\n")
+            total = 0
+            while True:
+                chunk = s.recv(4096)
+                if not chunk:
+                    break
+                total += len(chunk)
+            s.close()
+            dur = time.time() - t0
+            results.append({"bytes": total, "duration_ms": int(dur * 1000)})
+            print("  " + ASH + "[" + str(i+1) + "/" + str(samples) + "]" + RESET + " bytes=" + str(total) + " dur=" + str(int(dur*1000)) + "ms")
+        except Exception as e:
+            print("  " + CLOT + "err " + str(e)[:60] + RESET)
+
+    if results:
+        byt = [r["bytes"] for r in results]
+        dur = [r["duration_ms"] for r in results]
+        print()
+        print_kv("bytes_mean", str(sum(byt) // len(byt)))
+        print_kv("bytes_stdev", str(int((sum((x - sum(byt)/len(byt))**2 for x in byt) / len(byt)) ** 0.5)))
+        print_kv("dur_mean_ms", str(sum(dur) // len(dur)))
+        print_kv("dur_stdev_ms", str(int((sum((x - sum(dur)/len(dur))**2 for x in dur) / len(dur)) ** 0.5)))
+
+    out_path = Path(out) if out else DEANON_DIR / ("fingerprint_" + str(int(time.time())) + ".json")
+    out_path.write_text(json.dumps(results, indent=2))
+    print_kv("saved", out_path)
+    return 0
+
+
+def cmd_catalog() -> int:
+    print_info("tor deanonymization families")
+    print()
+    for key, c in CATALOG.items():
+        print("  " + SCARLET + key.ljust(24) + RESET + " " + BONE + c["title"] + RESET)
+        print("      " + ASH + "gets: " + c["what_it_gets"] + RESET)
+    print()
+    print_info("run:  redsky tor deanon info <name>")
+    return 0
+
+
+def cmd_info(name: str) -> int:
+    if name not in CATALOG:
+        print_err("unknown technique: " + name)
+        return 1
+    c = CATALOG[name]
+    print(SCARLET + BOLD + "== " + c["title"] + " ==" + RESET)
+    print()
+    print(ARTERY + "needs:" + RESET + "        " + c["needs"])
+    print(ARTERY + "what it gets:" + RESET + " " + c["what_it_gets"])
+    print()
+    print(ARTERY + "why hard:" + RESET)
+    for n in c["why_hard"]:
+        print("  - " + n)
+    print()
+    return 0
 
 
 def run_cli(args):
-    p = argparse.ArgumentParser(prog="redsky tor deanon", add_help=False)
-    p.add_argument("-h", "--help", action="store_true")
-    p.add_argument("action", nargs="?", default="help",
-                   choices=["exit-fingerprint", "browser-detect", "clock-skew",
-                            "correlation-plan", "guard-detect", "help"])
-    p.add_argument("--url", default="")
-    p.add_argument("--canary", default="")
-    p.add_argument("--targets", default="")
-    p.add_argument("--port", type=int, default=8080)
-    p.add_argument("--service", default="")
-    p.add_argument("--suspect", default="")
-    p.add_argument("--fingerprint", default="")
-    p.add_argument("--out", default="")
+    import argparse
+    sub = args[0] if args else "catalog"
+    rest = args[1:] if args else []
 
-    try:
-        ns = p.parse_args(args)
-    except SystemExit:
-        print_err("usage: redsky tor deanon <exit-fingerprint|browser-detect|clock-skew|correlation-plan|guard-detect> [opts]")
-        return 2
-
-    if ns.action == "help" or ns.help:
-        print_info("exit-fingerprint --url TARGET [--canary CANARY_URL]")
-        print_info("browser-detect [--port 8080]")
-        print_info("clock-skew --targets file.txt")
-        print_info("correlation-plan --service ONION --suspect IP")
-        print_info("guard-detect --fingerprint HEX40")
+    if sub in ("-h", "--help", "help"):
+        print_info("redsky tor deanon <sub-command>")
+        print_info("")
+        print_info("  catalog                          list deanonymization families")
+        print_info("  info <name>                      full reference for one family")
+        print_info("  relay-check --ip IP [--port 9001]")
+        print_info("      is an IP a known Tor relay? (onionoo lookup + flags)")
+        print_info("  fingerprint --host 127.0.0.1 --port 9050 [--samples 20] [--out FILE]")
+        print_info("      via Tor SOCKS, capture per-request byte+duration histogram")
         return 0
 
-    if ns.action == "exit-fingerprint":
-        return cmd_exit_fingerprint(ns.url, ns.canary, ns.out)
-    if ns.action == "browser-detect":
-        return cmd_browser_detect(ns.port, ns.out)
-    if ns.action == "clock-skew":
-        return cmd_clock_skew(ns.targets, ns.out)
-    if ns.action == "correlation-plan":
-        return cmd_correlation_plan(ns.service, ns.suspect, ns.out)
-    if ns.action == "guard-detect":
-        return cmd_guard_detect(ns.fingerprint, ns.out)
+    if sub in ("catalog", "list"):
+        return cmd_catalog()
+    if sub == "info":
+        if not rest:
+            print_err("usage: redsky tor deanon info <name>")
+            return 2
+        return cmd_info(rest[0])
+    if sub in ("relay-check", "relay_check", "relay"):
+        p = argparse.ArgumentParser(prog="redsky tor deanon relay-check", add_help=False)
+        p.add_argument("--ip", required=False, default="")
+        p.add_argument("--port", type=int, default=9001)
+        try:
+            ns = p.parse_args(rest)
+        except SystemExit:
+            print_err("usage: redsky tor deanon relay-check --ip IP [--port 9001]")
+            return 2
+        if not ns.ip:
+            print_err("--ip required")
+            return 2
+        return cmd_relay_check(ns.ip, ns.port)
+    if sub in ("fingerprint", "fp"):
+        p = argparse.ArgumentParser(prog="redsky tor deanon fingerprint", add_help=False)
+        p.add_argument("--host", default="127.0.0.1")
+        p.add_argument("--port", type=int, default=9050)
+        p.add_argument("--samples", type=int, default=20)
+        p.add_argument("--out", default="")
+        try:
+            ns = p.parse_args(rest)
+        except SystemExit:
+            print_err("usage: redsky tor deanon fingerprint --host 127.0.0.1 --port 9050 [--samples 20]")
+            return 2
+        return cmd_fingerprint(ns.host, ns.port, ns.samples, ns.out)
+
+    print_err("unknown deanon sub-command: " + sub)
     return 2
 
 

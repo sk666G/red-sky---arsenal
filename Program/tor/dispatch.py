@@ -7,14 +7,11 @@ from Program.utils import print_info, print_err
 def _usage():
     print_info("redsky tor <sub-command> [args...]")
     print_info("")
-    print_info("  hs <create|destroy|list|rotate|backup|status|torrc> [opts]")
-    print_info("      hidden service management via the Tor ControlPort")
+    print_info("  hs       create | delete | list | keygen")
+    print_info("      v3 hidden service control via Tor control port")
     print_info("")
-    print_info("  circuit <list|newnym|close|exit|guard|reload|kill|info> [opts]")
-    print_info("      list circuits, request new identity, force exit country")
-    print_info("")
-    print_info("  deanon <exit-fingerprint|browser-detect|clock-skew|correlation-plan|guard-detect> [opts]")
-    print_info("      deanonymization probes and reference methods")
+    print_info("  deanon   catalog | info <name> | relay-check | fingerprint")
+    print_info("      deanonymization family reference + relay lookup + site fp collector")
 
 
 def run_cli(args: List[str]) -> int:
@@ -29,10 +26,7 @@ def run_cli(args: List[str]) -> int:
     if sub in ("hs", "hidden", "h"):
         from .hs import run_cli as _f
         return int(_f(args[1:]))
-    if sub in ("circuit", "circ", "c"):
-        from .circuit import run_cli as _f
-        return int(_f(args[1:]))
-    if sub in ("deanon", "deanonimize", "deanonymize", "d"):
+    if sub in ("deanon", "d", "deanonymize"):
         from .deanonymize import run_cli as _f
         return int(_f(args[1:]))
 
