@@ -653,3 +653,9 @@ func (s *Session) SendDroneStart(sessionID string, req proto.DroneStart) error {
 	req.SessionID = sessionID
 	return s.sendTunnelMsg(proto.TypeDroneStart, req)
 }
+
+// SendCCTVStart drives the RTSP camera reconnaissance.
+func (s *Session) SendCCTVStart(sessionID string, req proto.CCTVStart) error {
+	req.SessionID = sessionID
+	return s.sendTunnelMsg(proto.TypeCCTVStart, req)
+}

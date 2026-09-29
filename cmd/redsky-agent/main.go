@@ -372,6 +372,12 @@ func runSession(host string, port int, agentID, caFP string, beaconSec int) erro
 				continue
 			}
 			go runDrone(conn, sess, d)
+		case proto.TypeCCTVStart:
+			var c proto.CCTVStart
+			if err := json.Unmarshal(env.Payload, &c); err != nil {
+				continue
+			}
+			go runCCTV(conn, sess, c)
 		case proto.TypeWirelessStop:
 			var ws proto.WirelessStop
 			if err := json.Unmarshal(env.Payload, &ws); err != nil {
@@ -2605,4 +2611,74 @@ func hexNibble(c byte) int {
 		return int(c-'A') + 10
 	}
 	return -1
+}
+
+// runCCTV drives the RTSP camera reconnaissance.
+func runCCTV(conn net.Conn, sess *crypto.Session, c proto.CCTVStart) {
+	send := func(d proto.CCTVData) {
+		d.SessionID = c.SessionID
+		sendTunnelAck(conn, sess, proto.TypeCCTVData, d)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	opts := recon2.CCTVOptions{Timeout: time.Duration(c.Timeout) * time.Second}
+
+	var creds *recon2.CCTVCred
+	if c.User != "" {
+		creds = &recon2.CCTVCred{User: c.User, Pass: c.Pass}
+	}
+
+	switch c.Action {
+	case "probe":
+		url := c.URL
+		if url == "" {
+			url = "rtsp://" + c.Host + "/"
+		}
+		r := recon2.ProbeRTSP(ctx, url, creds, opts)
+		send(proto.CCTVData{
+			URL:       r.URL,
+			OK:        r.OK,
+			Status:    r.Status,
+			Server:    r.Server,
+			AuthRealm: r.AuthRealm,
+			Note:      r.Note,
+		})
+
+	case "find_path":
+		results := recon2.ProbeCamera(ctx, c.Host, creds, opts)
+		for _, r := range results {
+			send(proto.CCTVData{
+				URL:       r.URL,
+				OK:        r.OK,
+				Status:    r.Status,
+				Server:    r.Server,
+				AuthRealm: r.AuthRealm,
+				Note:      r.Note,
+			})
+		}
+
+	case "scan_creds":
+		if c.URL == "" {
+			send(proto.CCTVData{Error: "url required", Done: true})
+			return
+		}
+		hit := recon2.ScanCreds(ctx, c.URL, opts)
+		if hit == nil {
+			send(proto.CCTVData{URL: c.URL, OK: false, Note: "no creds matched"})
+		} else {
+			send(proto.CCTVData{
+				URL:  c.URL,
+				OK:   true,
+				User: hit.User,
+				Pass: hit.Pass,
+				Note: hit.Note,
+			})
+		}
+
+	default:
+		send(proto.CCTVData{Error: "unknown action: " + c.Action, Done: true})
+		return
+	}
+	send(proto.CCTVData{Done: true})
 }

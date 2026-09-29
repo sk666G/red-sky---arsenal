@@ -206,6 +206,12 @@ func main() {
 	droneV2 := flag.Bool("drone-v2", false, "use MAVLink v2 framing")
 	droneSigKey := flag.String("drone-sig-key", "", "MAVLink v2 signing key (hex, 32 bytes)")
 	droneLinkID := flag.Uint("drone-link-id", 0, "MAVLink v2 signing link id")
+	cctvAction := flag.String("cctv", "", "cctv action: probe|find_path|scan_creds")
+	cctvHost := flag.String("cctv-host", "", "camera host")
+	cctvURL := flag.String("cctv-url", "", "full rtsp url")
+	cctvUser := flag.String("cctv-user", "", "rtsp user")
+	cctvPass := flag.String("cctv-pass", "", "rtsp password")
+	cctvTimeout := flag.Int("cctv-timeout", 5, "per-request timeout (seconds)")
 	pmkidIface := flag.String("pmkid", "", "802.11 PMKID harvest: monitor-mode iface")
 	pmkidChannel := flag.Int("pmkid-channel", 0, "PMKID: set wifi channel before harvest")
 	pmkidDuration := flag.Duration("pmkid-duration", 60*time.Second, "PMKID: total harvest run time")
@@ -713,6 +719,18 @@ func main() {
 			UseV2:      *droneV2,
 			SigKey:     *droneSigKey,
 			LinkID:     uint8(*droneLinkID),
+		})
+	}
+
+	// cctv dispatch — RTSP camera reconnaissance on the first agent
+	if *cctvAction != "" {
+		go runCCTV(mgr, cctvArgs{
+			Action:  *cctvAction,
+			Host:    *cctvHost,
+			URL:     *cctvURL,
+			User:    *cctvUser,
+			Pass:    *cctvPass,
+			Timeout: *cctvTimeout,
 		})
 	}
 
@@ -1824,5 +1842,38 @@ func runDroneDispatch(mgr *session.Manager, a droneArgs) {
 	}
 	if err := s.SendDroneStart(sessionID, req); err != nil {
 		log.Printf("[drone] start: %v", err)
+	}
+}
+
+// cctvArgs carries the operator's -cctv* flags.
+type cctvArgs struct {
+	Action  string
+	Host    string
+	URL     string
+	User    string
+	Pass    string
+	Timeout int
+}
+
+// runCCTV waits for the first agent, sends a CCTVStart. Name re-used here
+// for the core-side dispatch; the agent has its own handler.
+func runCCTV(mgr *session.Manager, a cctvArgs) {
+	for len(mgr.Sessions()) == 0 {
+		time.Sleep(500 * time.Millisecond)
+	}
+	s := mgr.Sessions()[0]
+	sessionID := fmt.Sprintf("cv-%d", time.Now().UnixNano())
+	log.Printf("[cctv] %s host=%q url=%q -> %s", a.Action, a.Host, a.URL, s.AgentID)
+	req := proto.CCTVStart{
+		SessionID: sessionID,
+		Action:    a.Action,
+		Host:      a.Host,
+		URL:       a.URL,
+		User:      a.User,
+		Pass:      a.Pass,
+		Timeout:   a.Timeout,
+	}
+	if err := s.SendCCTVStart(sessionID, req); err != nil {
+		log.Printf("[cctv] start: %v", err)
 	}
 }

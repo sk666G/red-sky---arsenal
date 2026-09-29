@@ -86,6 +86,8 @@ const (
 	TypeBluetoothData   MessageType = "bluetooth_data"
 	TypeDroneStart      MessageType = "drone_start"
 	TypeDroneData       MessageType = "drone_data"
+	TypeCCTVStart       MessageType = "cctv_start"
+	TypeCCTVData        MessageType = "cctv_data"
 	TypeWirelessStop    MessageType = "wireless_stop"
 	TypeWirelessData    MessageType = "wireless_data"
 	TypeWirelessDone    MessageType = "wireless_done"
@@ -839,4 +841,30 @@ type DroneData struct {
 	Message   string   `json:"message,omitempty"`
 	Error     string   `json:"error,omitempty"`
 	Done      bool     `json:"done"`
+}
+
+// CCTVStart drives the RTSP camera reconnaissance on the agent.
+type CCTVStart struct {
+	SessionID string `json:"session_id"`
+	Action    string `json:"action"` // probe|scan_creds|find_path
+	Host      string `json:"host,omitempty"`
+	URL       string `json:"url,omitempty"`
+	User      string `json:"user,omitempty"`
+	Pass      string `json:"pass,omitempty"`
+	Timeout   int    `json:"timeout,omitempty"`
+}
+
+// CCTVData streams the results back.
+type CCTVData struct {
+	SessionID string `json:"session_id"`
+	URL       string `json:"url,omitempty"`
+	OK        bool   `json:"ok"`
+	Status    int    `json:"status"`
+	Server    string `json:"server,omitempty"`
+	AuthRealm string `json:"auth_realm,omitempty"`
+	User      string `json:"user,omitempty"`
+	Pass      string `json:"pass,omitempty"`
+	Note      string `json:"note,omitempty"`
+	Error     string `json:"error,omitempty"`
+	Done      bool   `json:"done"`
 }
