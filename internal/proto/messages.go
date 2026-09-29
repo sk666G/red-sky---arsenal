@@ -84,6 +84,8 @@ const (
 	TypeCSIntData       MessageType = "csint_data"
 	TypeBluetoothStart  MessageType = "bluetooth_start"
 	TypeBluetoothData   MessageType = "bluetooth_data"
+	TypeDroneStart      MessageType = "drone_start"
+	TypeDroneData       MessageType = "drone_data"
 	TypeWirelessStop    MessageType = "wireless_stop"
 	TypeWirelessData    MessageType = "wireless_data"
 	TypeWirelessDone    MessageType = "wireless_done"
@@ -791,4 +793,47 @@ type BluetoothData struct {
 	Chars    []string `json:"chars,omitempty"`    // formatted "service_uuid|handle|uuid|flags"
 	GATTHex  string   `json:"gatt_hex,omitempty"`
 	Notifies []string `json:"notifies,omitempty"`
+}
+
+// DroneStart drives MAVLink operations on the agent.
+type DroneStart struct {
+	SessionID string `json:"session_id"`
+	Action    string `json:"action"` // listen|heartbeat|command|mode|manual|goto
+	Host      string `json:"host,omitempty"`
+	Port      int    `json:"port,omitempty"`
+	SysID     uint8  `json:"sys_id,omitempty"`
+	CompID    uint8  `json:"comp_id,omitempty"`
+
+	// listen
+	ListenDuration int `json:"listen_duration,omitempty"` // seconds
+
+	// command
+	TargetSys  uint16    `json:"target_sys,omitempty"`
+	TargetComp uint16    `json:"target_comp,omitempty"`
+	Command    uint16    `json:"command,omitempty"`
+	Params     []float32 `json:"params,omitempty"` // up to 7
+
+	// mode
+	BaseMode   uint32 `json:"base_mode,omitempty"`
+	CustomMode uint32 `json:"custom_mode,omitempty"`
+
+	// manual
+	ManualX int16  `json:"manual_x,omitempty"`
+	ManualY int16  `json:"manual_y,omitempty"`
+	ManualZ int16  `json:"manual_z,omitempty"`
+	ManualR int16  `json:"manual_r,omitempty"`
+	Buttons uint16 `json:"buttons,omitempty"`
+
+	// goto
+	Lat, Lon, Alt float32 `json:"lat,omitempty"`
+	Vx, Vy, Vz    float32 `json:"vx,omitempty"`
+}
+
+// DroneData streams results back.
+type DroneData struct {
+	SessionID string   `json:"session_id"`
+	Frames    []string `json:"frames,omitempty"` // formatted "from|msgid|payload_hex"
+	Message   string   `json:"message,omitempty"`
+	Error     string   `json:"error,omitempty"`
+	Done      bool     `json:"done"`
 }

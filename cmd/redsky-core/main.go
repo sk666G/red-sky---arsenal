@@ -191,6 +191,15 @@ func main() {
 	btAction := flag.String("bluetooth", "", "bluetooth action: scan|info")
 	btAddress := flag.String("bluetooth-address", "", "device MAC (info)")
 	btDuration := flag.Int("bluetooth-duration", 10, "scan duration (seconds)")
+	droneAction := flag.String("drone", "", "MAVLink action: listen|heartbeat|command|mode|manual")
+	droneHost := flag.String("drone-host", "", "UAV ip")
+	dronePort := flag.Int("drone-port", 14550, "MAVLink udp port")
+	droneSysID := flag.Uint("drone-sysid", 255, "mavlink system id")
+	droneCompID := flag.Uint("drone-compid", 190, "mavlink component id")
+	droneTargetSys := flag.Uint("drone-target-sys", 1, "target system id")
+	droneTargetComp := flag.Uint("drone-target-comp", 1, "target component id")
+	droneCommand := flag.Uint("drone-command", 0, "MAV_CMD id")
+	droneListen := flag.Int("drone-listen", 10, "listen duration (seconds)")
 	pmkidIface := flag.String("pmkid", "", "802.11 PMKID harvest: monitor-mode iface")
 	pmkidChannel := flag.Int("pmkid-channel", 0, "PMKID: set wifi channel before harvest")
 	pmkidDuration := flag.Duration("pmkid-duration", 60*time.Second, "PMKID: total harvest run time")
@@ -677,6 +686,21 @@ func main() {
 			Action:   *btAction,
 			Address:  *btAddress,
 			Duration: *btDuration,
+		})
+	}
+
+	// drone dispatch — MAVLink operations on the first agent
+	if *droneAction != "" {
+		go runDroneDispatch(mgr, droneArgs{
+			Action:     *droneAction,
+			Host:       *droneHost,
+			Port:       *dronePort,
+			SysID:      uint8(*droneSysID),
+			CompID:     uint8(*droneCompID),
+			TargetSys:  uint16(*droneTargetSys),
+			TargetComp: uint16(*droneTargetComp),
+			Command:    uint16(*droneCommand),
+			Listen:     *droneListen,
 		})
 	}
 
@@ -1738,5 +1762,43 @@ func runBluetoothDispatch(mgr *session.Manager, a bluetoothArgs) {
 	}
 	if err := s.SendBluetoothStart(sessionID, req); err != nil {
 		log.Printf("[bluetooth] start: %v", err)
+	}
+}
+
+// droneArgs carries the operator's -drone* flags.
+type droneArgs struct {
+	Action     string
+	Host       string
+	Port       int
+	SysID      uint8
+	CompID     uint8
+	TargetSys  uint16
+	TargetComp uint16
+	Command    uint16
+	Listen     int
+}
+
+// runDroneDispatch waits for the first agent, sends a DroneStart.
+func runDroneDispatch(mgr *session.Manager, a droneArgs) {
+	for len(mgr.Sessions()) == 0 {
+		time.Sleep(500 * time.Millisecond)
+	}
+	s := mgr.Sessions()[0]
+	sessionID := fmt.Sprintf("dr-%d", time.Now().UnixNano())
+	log.Printf("[drone] %s @ %s:%d -> %s", a.Action, a.Host, a.Port, s.AgentID)
+	req := proto.DroneStart{
+		SessionID:      sessionID,
+		Action:         a.Action,
+		Host:           a.Host,
+		Port:           a.Port,
+		SysID:          a.SysID,
+		CompID:         a.CompID,
+		TargetSys:      a.TargetSys,
+		TargetComp:     a.TargetComp,
+		Command:        a.Command,
+		ListenDuration: a.Listen,
+	}
+	if err := s.SendDroneStart(sessionID, req); err != nil {
+		log.Printf("[drone] start: %v", err)
 	}
 }

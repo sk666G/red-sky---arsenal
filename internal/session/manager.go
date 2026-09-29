@@ -647,3 +647,9 @@ func (s *Session) SendBluetoothStart(sessionID string, req proto.BluetoothStart)
 	req.SessionID = sessionID
 	return s.sendTunnelMsg(proto.TypeBluetoothStart, req)
 }
+
+// SendDroneStart drives MAVLink operations on the agent.
+func (s *Session) SendDroneStart(sessionID string, req proto.DroneStart) error {
+	req.SessionID = sessionID
+	return s.sendTunnelMsg(proto.TypeDroneStart, req)
+}
