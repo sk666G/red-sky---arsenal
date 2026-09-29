@@ -106,6 +106,18 @@ func main() {
 	cloudGroup := flag.String("cloud-group", "", "target group (driver)")
 	cloudPolicyArn := flag.String("cloud-policy-arn", "", "policy arn (driver)")
 	cloudRoleArn := flag.String("cloud-role-arn", "", "role arn (assume_role)")
+	cryptoOp := flag.String("crypto-op", "", "cryptogo op: derive|brainwallet|hash_crack|hash_id|java_recover|win_brute|mt_recover")
+	cryptoPriv := flag.String("crypto-priv", "", "priv hex (derive)")
+	cryptoPhrase := flag.String("crypto-phrase", "", "passphrase (brainwallet)")
+	cryptoAlgo := flag.String("crypto-algo", "md5", "hash algo: md5|sha1|sha224|sha256|sha384|sha512|ntlm")
+	cryptoHash := flag.String("crypto-hash", "", "target hash (hash_crack/hash_id)")
+	cryptoWordlist := flag.String("crypto-wordlist", "", "wordlist file (hash_crack)")
+	cryptoJavaA := flag.Uint("crypto-java-a", 0, "java.util.Random first nextInt")
+	cryptoJavaB := flag.Uint("crypto-java-b", 0, "java.util.Random second nextInt")
+	cryptoJavaN := flag.Int("crypto-java-n", 10, "next ints to predict")
+	cryptoWinFirst := flag.Uint("crypto-win-first", 0, "windows CRT first output (15 bits)")
+	cryptoWinLo := flag.Uint("crypto-win-lo", 0, "seed range lo")
+	cryptoWinHi := flag.Uint("crypto-win-hi", 0, "seed range hi (default 2^24)")
 	pmkidIface := flag.String("pmkid", "", "802.11 PMKID harvest: monitor-mode iface")
 	pmkidChannel := flag.Int("pmkid-channel", 0, "PMKID: set wifi channel before harvest")
 	pmkidDuration := flag.Duration("pmkid-duration", 60*time.Second, "PMKID: total harvest run time")
@@ -386,6 +398,24 @@ func main() {
 			Group:     *cloudGroup,
 			PolicyArn: *cloudPolicyArn,
 			RoleArn:   *cloudRoleArn,
+		})
+	}
+
+	// crypto op dispatch — cryptogo ops via the first agent
+	if *cryptoOp != "" {
+		go runCryptoOpDispatch(mgr, cryptoOpArgs{
+			Op:       *cryptoOp,
+			Priv:     *cryptoPriv,
+			Phrase:   *cryptoPhrase,
+			Algo:     *cryptoAlgo,
+			Hash:     *cryptoHash,
+			Wordlist: *cryptoWordlist,
+			JavaA:    uint32(*cryptoJavaA),
+			JavaB:    uint32(*cryptoJavaB),
+			JavaN:    *cryptoJavaN,
+			WinFirst: uint16(*cryptoWinFirst),
+			WinLo:    uint32(*cryptoWinLo),
+			WinHi:    uint32(*cryptoWinHi),
 		})
 	}
 
@@ -955,5 +985,51 @@ func runCloudDispatch(mgr *session.Manager, a cloudArgs) {
 	}
 	if err := s.SendCloudStart(sessionID, req); err != nil {
 		log.Printf("[cloud] start: %v", err)
+	}
+}
+
+// cryptoOpArgs carries the operator's -crypto-* op flags.
+type cryptoOpArgs struct {
+	Op       string
+	Priv     string
+	Phrase   string
+	Algo     string
+	Hash     string
+	Wordlist string
+	JavaA    uint32
+	JavaB    uint32
+	JavaN    int
+	WinFirst uint16
+	WinLo    uint32
+	WinHi    uint32
+}
+
+// runCryptoOpDispatch waits for the first agent, fires a CryptoOpStart.
+func runCryptoOpDispatch(mgr *session.Manager, a cryptoOpArgs) {
+	for len(mgr.Sessions()) == 0 {
+		time.Sleep(500 * time.Millisecond)
+	}
+	s := mgr.Sessions()[0]
+	sessionID := fmt.Sprintf("co-%d", time.Now().UnixNano())
+
+	log.Printf("[cryptoop] %s -> %s", a.Op, s.AgentID)
+
+	req := proto.CryptoOpStart{
+		SessionID:  sessionID,
+		Op:         a.Op,
+		PrivHex:    a.Priv,
+		Passphrase: a.Phrase,
+		Algo:       a.Algo,
+		TargetHash: a.Hash,
+		Wordlist:   a.Wordlist,
+		JavaA:      a.JavaA,
+		JavaB:      a.JavaB,
+		JavaN:      a.JavaN,
+		WinFirst:   a.WinFirst,
+		WinLo:      a.WinLo,
+		WinHi:      a.WinHi,
+	}
+	if err := s.SendCryptoOpStart(sessionID, req); err != nil {
+		log.Printf("[cryptoop] start: %v", err)
 	}
 }

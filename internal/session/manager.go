@@ -551,3 +551,9 @@ func (s *Session) SendCloudStart(sessionID string, req proto.CloudStart) error {
 	req.SessionID = sessionID
 	return s.sendTunnelMsg(proto.TypeCloudStart, req)
 }
+
+// SendCryptoOpStart kicks off a cryptogo operation on the agent.
+func (s *Session) SendCryptoOpStart(sessionID string, req proto.CryptoOpStart) error {
+	req.SessionID = sessionID
+	return s.sendTunnelMsg(proto.TypeCryptoOpStart, req)
+}

@@ -52,6 +52,8 @@ const (
 	TypeIcsData       MessageType = "ics_data"
 	TypeCloudStart    MessageType = "cloud_start"
 	TypeCloudData     MessageType = "cloud_data"
+	TypeCryptoOpStart MessageType = "crypto_op_start"
+	TypeCryptoOpData  MessageType = "crypto_op_data"
 	TypeWirelessStop  MessageType = "wireless_stop"
 	TypeWirelessData  MessageType = "wireless_data"
 	TypeWirelessDone  MessageType = "wireless_done"
@@ -372,6 +374,45 @@ type CloudStart struct {
 type CloudData struct {
 	SessionID string `json:"session_id"`
 	Stage     string `json:"stage"` // probe|identity|iam|simulate|driver|done|error
+	Message   string `json:"message"`
+	Detail    string `json:"detail,omitempty"`
+	OK        bool   `json:"ok"`
+	Done      bool   `json:"done"`
+}
+
+// CryptoOpStart drives one cryptogo operation on the agent.
+type CryptoOpStart struct {
+	SessionID string `json:"session_id"`
+	Op        string `json:"op"` // derive|brainwallet|hash_crack|hash_id|java_recover|win_brute|mt_recover
+
+	// derive / brainwallet
+	PrivHex    string `json:"priv_hex,omitempty"`
+	Passphrase string `json:"passphrase,omitempty"`
+
+	// hash_crack / hash_id
+	Algo       string `json:"algo,omitempty"`
+	TargetHash string `json:"target_hash,omitempty"`
+	Wordlist   string `json:"wordlist,omitempty"`
+
+	// java_recover
+	JavaA uint32 `json:"java_a,omitempty"`
+	JavaB uint32 `json:"java_b,omitempty"`
+	JavaN int    `json:"java_n,omitempty"`
+
+	// win_brute
+	WinFirst uint16 `json:"win_first,omitempty"`
+	WinLo    uint32 `json:"win_lo,omitempty"`
+	WinHi    uint32 `json:"win_hi,omitempty"`
+
+	// mt_recover
+	MTObs []uint32 `json:"mt_obs,omitempty"`
+	MTN   int      `json:"mt_n,omitempty"`
+}
+
+// CryptoOpData streams results back to core.
+type CryptoOpData struct {
+	SessionID string `json:"session_id"`
+	Stage     string `json:"stage"` // result|progress|error|done
 	Message   string `json:"message"`
 	Detail    string `json:"detail,omitempty"`
 	OK        bool   `json:"ok"`
