@@ -212,6 +212,12 @@ func main() {
 	cctvUser := flag.String("cctv-user", "", "rtsp user")
 	cctvPass := flag.String("cctv-pass", "", "rtsp password")
 	cctvTimeout := flag.Int("cctv-timeout", 5, "per-request timeout (seconds)")
+	reportTitle := flag.String("report", "", "generate a report: pass title (empty = skip)")
+	reportOperator := flag.String("report-operator", "", "operator name")
+	reportEngagement := flag.String("report-engagement", "", "engagement name")
+	reportSrcDir := flag.String("report-dir", "", "directory to walk for JSON sources")
+	reportFindings := flag.String("report-findings", "", "path to a JSON array of findings")
+	reportOut := flag.String("report-out", "", "output path (default: /tmp/redsky_report_<ts>.md)")
 	pmkidIface := flag.String("pmkid", "", "802.11 PMKID harvest: monitor-mode iface")
 	pmkidChannel := flag.Int("pmkid-channel", 0, "PMKID: set wifi channel before harvest")
 	pmkidDuration := flag.Duration("pmkid-duration", 60*time.Second, "PMKID: total harvest run time")
@@ -731,6 +737,26 @@ func main() {
 			User:    *cctvUser,
 			Pass:    *cctvPass,
 			Timeout: *cctvTimeout,
+		})
+	}
+
+	// report dispatch — build a report from collected JSON
+	if *reportTitle != "" {
+		findingsBlob := ""
+		if *reportFindings != "" {
+			if b, err := os.ReadFile(*reportFindings); err == nil {
+				findingsBlob = string(b)
+			} else {
+				log.Printf("[report] read findings: %v", err)
+			}
+		}
+		go runReportDispatch(mgr, reportArgs{
+			Title:      *reportTitle,
+			Operator:   *reportOperator,
+			Engagement: *reportEngagement,
+			SourceDir:  *reportSrcDir,
+			Findings:   findingsBlob,
+			OutPath:    *reportOut,
 		})
 	}
 
@@ -1875,5 +1901,37 @@ func runCCTV(mgr *session.Manager, a cctvArgs) {
 	}
 	if err := s.SendCCTVStart(sessionID, req); err != nil {
 		log.Printf("[cctv] start: %v", err)
+	}
+}
+
+// reportArgs carries the operator's -report-* flags.
+type reportArgs struct {
+	Title      string
+	Operator   string
+	Engagement string
+	SourceDir  string
+	Findings   string
+	OutPath    string
+}
+
+// runReportDispatch waits for the first agent, sends a ReportStart.
+func runReportDispatch(mgr *session.Manager, a reportArgs) {
+	for len(mgr.Sessions()) == 0 {
+		time.Sleep(500 * time.Millisecond)
+	}
+	s := mgr.Sessions()[0]
+	sessionID := fmt.Sprintf("rp-%d", time.Now().UnixNano())
+	log.Printf("[report] %q -> %s", a.Title, s.AgentID)
+	req := proto.ReportStart{
+		SessionID:    sessionID,
+		Title:        a.Title,
+		Operator:     a.Operator,
+		Engagement:   a.Engagement,
+		SourceDir:    a.SourceDir,
+		FindingsJSON: a.Findings,
+		OutPath:      a.OutPath,
+	}
+	if err := s.SendReportStart(sessionID, req); err != nil {
+		log.Printf("[report] start: %v", err)
 	}
 }

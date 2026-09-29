@@ -88,6 +88,8 @@ const (
 	TypeDroneData       MessageType = "drone_data"
 	TypeCCTVStart       MessageType = "cctv_start"
 	TypeCCTVData        MessageType = "cctv_data"
+	TypeReportStart     MessageType = "report_start"
+	TypeReportData      MessageType = "report_data"
 	TypeWirelessStop    MessageType = "wireless_stop"
 	TypeWirelessData    MessageType = "wireless_data"
 	TypeWirelessDone    MessageType = "wireless_done"
@@ -865,6 +867,28 @@ type CCTVData struct {
 	User      string `json:"user,omitempty"`
 	Pass      string `json:"pass,omitempty"`
 	Note      string `json:"note,omitempty"`
+	Error     string `json:"error,omitempty"`
+	Done      bool   `json:"done"`
+}
+
+// ReportStart asks the agent to aggregate collected JSON into a report.
+type ReportStart struct {
+	SessionID    string `json:"session_id"`
+	Title        string `json:"title"`
+	Operator     string `json:"operator,omitempty"`
+	Engagement   string `json:"engagement,omitempty"`
+	SourceDir    string `json:"source_dir,omitempty"`    // walk this dir for .json
+	FindingsJSON string `json:"findings_json,omitempty"` // raw JSON array of findings
+	OutPath      string `json:"out_path,omitempty"`
+}
+
+// ReportData carries the rendered report back.
+type ReportData struct {
+	SessionID string `json:"session_id"`
+	Path      string `json:"path,omitempty"`
+	Markdown  string `json:"markdown,omitempty"`
+	Findings  int    `json:"findings,omitempty"`
+	Sources   int    `json:"sources,omitempty"`
 	Error     string `json:"error,omitempty"`
 	Done      bool   `json:"done"`
 }

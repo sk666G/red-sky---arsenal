@@ -659,3 +659,9 @@ func (s *Session) SendCCTVStart(sessionID string, req proto.CCTVStart) error {
 	req.SessionID = sessionID
 	return s.sendTunnelMsg(proto.TypeCCTVStart, req)
 }
+
+// SendReportStart asks the agent to aggregate collected JSON into a report.
+func (s *Session) SendReportStart(sessionID string, req proto.ReportStart) error {
+	req.SessionID = sessionID
+	return s.sendTunnelMsg(proto.TypeReportStart, req)
+}

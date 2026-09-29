@@ -378,6 +378,12 @@ func runSession(host string, port int, agentID, caFP string, beaconSec int) erro
 				continue
 			}
 			go runCCTV(conn, sess, c)
+		case proto.TypeReportStart:
+			var r proto.ReportStart
+			if err := json.Unmarshal(env.Payload, &r); err != nil {
+				continue
+			}
+			go runReport(conn, sess, r)
 		case proto.TypeWirelessStop:
 			var ws proto.WirelessStop
 			if err := json.Unmarshal(env.Payload, &ws); err != nil {
@@ -2681,4 +2687,46 @@ func runCCTV(conn net.Conn, sess *crypto.Session, c proto.CCTVStart) {
 		return
 	}
 	send(proto.CCTVData{Done: true})
+}
+
+// runReport aggregates collected JSON into a Markdown report.
+func runReport(conn net.Conn, sess *crypto.Session, r proto.ReportStart) {
+	rep := recon2.NewReport(r.Title, r.Operator, r.Engagement)
+
+	// load raw sources
+	if r.SourceDir != "" {
+		_ = rep.AddRawDir(r.SourceDir)
+	}
+
+	// load findings from JSON blob
+	if r.FindingsJSON != "" {
+		var findings []recon2.Finding
+		if err := json.Unmarshal([]byte(r.FindingsJSON), &findings); err == nil {
+			for _, f := range findings {
+				rep.AddFinding(f)
+			}
+		}
+	}
+
+	outPath := r.OutPath
+	if outPath == "" {
+		outPath = fmt.Sprintf("/tmp/redsky_report_%d.md", time.Now().UnixNano())
+	}
+	if err := rep.Save(outPath); err != nil {
+		sendTunnelAck(conn, sess, proto.TypeReportData, proto.ReportData{
+			SessionID: r.SessionID,
+			Error:     err.Error(),
+			Done:      true,
+		})
+		return
+	}
+	md := rep.Render()
+	sendTunnelAck(conn, sess, proto.TypeReportData, proto.ReportData{
+		SessionID: r.SessionID,
+		Path:      outPath,
+		Markdown:  md,
+		Findings:  len(rep.Findings),
+		Sources:   len(rep.Raw),
+		Done:      true,
+	})
 }
