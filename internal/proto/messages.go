@@ -644,3 +644,16 @@ type HostInfoData struct {
 	Error     string `json:"error,omitempty"`
 	Done      bool   `json:"done"`
 }
+
+// VMDetectStart asks the agent to run the VM/sandbox detection suite.
+type VMDetectStart struct {
+	SessionID string `json:"session_id"`
+}
+
+// VMDetectData is the reply.
+type VMDetectData struct {
+	SessionID string   `json:"session_id"`
+	Signals   []string `json:"signals,omitempty"` // formatted "check|signal|evidence"
+	Count     int      `json:"count"`
+	Done      bool     `json:"done"`
+}

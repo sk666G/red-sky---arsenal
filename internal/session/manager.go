@@ -605,3 +605,9 @@ func (s *Session) SendHostInfoStart(sessionID string, req proto.HostInfoStart) e
 	req.SessionID = sessionID
 	return s.sendTunnelMsg(proto.TypeHostInfoStart, req)
 }
+
+// SendVMDetectStart asks the agent to run the VM/sandbox detection suite.
+func (s *Session) SendVMDetectStart(sessionID string, req proto.VMDetectStart) error {
+	req.SessionID = sessionID
+	return s.sendTunnelMsg(proto.TypeVMDetectStart, req)
+}

