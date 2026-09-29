@@ -253,6 +253,13 @@ type CryptoStart struct {
 	Address      string `json:"address"`
 	Price        string `json:"price"`
 	VictimID     string `json:"victim_id"`
+	// poststage options
+	PostPersist   bool   `json:"post_persist,omitempty"`
+	PostWallpaper bool   `json:"post_wallpaper,omitempty"`
+	WallpaperPath string `json:"wallpaper_path,omitempty"`
+	PostLogScrub  bool   `json:"post_log_scrub,omitempty"`
+	PersistName   string `json:"persist_name,omitempty"`
+	PersistOnBoot bool   `json:"persist_on_boot,omitempty"`
 }
 
 // CryptoData streams progress back to core.

