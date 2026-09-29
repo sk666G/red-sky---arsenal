@@ -1,19 +1,31 @@
-# language: Python, file: Program/ics/modbus.py, target: Red Sky ics — Modbus/TCP
-# Modbus/TCP scanner + read/write toolkit.
-#   scan       -- find Modbus servers on a CIDR (port 502 + alt 5020)
-#   units      -- enumerate valid unit IDs on one server
-#   read       -- read coils / discrete inputs / holding / input registers
-#   write      -- write coil / register (single or bulk)
-#   enumerate  -- walk the address space and surface populated ranges
-#   probe      -- full function-code probe (which FCs does this PLC accept)
-# Everything builds raw Modbus/TCP frames — no pymodbus dependency.
+# language: Python, file: Program/ics/modbus.py, target: Red Sky ics — Modbus TCP
+# Modbus TCP client. Raw socket, no pymodbus dependency — the wire format
+# is simple enough that building it directly is shorter.
+#
+# Frame layout (MBAP + PDU):
+#   MBAP header (7 bytes):
+#     transaction id (2)  protocol id = 0 (2)  length (2)  unit id (1)
+#   PDU:
+#     function code (1)   data (N)
+#
+# Function codes we care about:
+#   0x01  Read Coils                (bit outputs — relays, valves)
+#   0x02  Read Discrete Inputs      (bit inputs — switches, sensors)
+#   0x03  Read Holding Registers    (16-bit — setpoints, config)
+#   0x04  Read Input Registers      (16-bit — sensor readings)
+#   0x05  Write Single Coil         (turn an output on/off)
+#   0x06  Write Single Register     (set a 16-bit value)
+#   0x0F  Write Multiple Coils
+#   0x10  Write Multiple Registers
+#
+# Modbus has no authentication. Any device that answers on TCP/502 accepts
+# any write that names a valid unit id.
 
 import json
 import socket
 import struct
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -24,387 +36,277 @@ from Program.utils.paths import OUTPUT_DIR
 
 ICS_DIR = OUTPUT_DIR / "ics"
 MODBUS_DIR = ICS_DIR / "modbus"
-MODBUS_DIR.mkdir(parents=True, exist_ok=True)
 
 
-# ── Modbus function codes ──
-FC_READ_COILS = 0x01
-FC_READ_DISCRETE_INPUTS = 0x02
-FC_READ_HOLDING_REGISTERS = 0x03
-FC_READ_INPUT_REGISTERS = 0x04
-FC_WRITE_SINGLE_COIL = 0x05
-FC_WRITE_SINGLE_REGISTER = 0x06
-FC_WRITE_MULTIPLE_COILS = 0x0F
-FC_WRITE_MULTIPLE_REGISTERS = 0x10
-FC_REPORT_SERVER_ID = 0x11
-FC_READ_FILE_RECORD = 0x14
-FC_WRITE_FILE_RECORD = 0x15
-FC_MASK_WRITE_REGISTER = 0x16
-FC_READ_WRITE_MULTIPLE_REGISTERS = 0x17
-FC_READ_FIFO_QUEUE = 0x18
-FC_READ_DEVICE_IDENTIFICATION = 0x2B
+# ── wire format ────────────────────────────────────────────────────────────
+
+def _mbap(txid: int, unit: int, pdu: bytes) -> bytes:
+    length = len(pdu) + 1  # + unit id
+    return struct.pack("!HHHB", txid, 0, length, unit) + pdu
 
 
-# ── Modbus/TCP framing ──
-def build_request(txid: int, unit_id: int, pdu: bytes) -> bytes:
-    """MBAP header = txid(2) + proto(2) + length(2) + unit(1)."""
-    length = len(pdu) + 1
-    return struct.pack(">HHHB", txid, 0, length, unit_id) + pdu
+def _read_coils(unit: int, addr: int, count: int) -> bytes:
+    return struct.pack("!BHH", 0x01, addr, count)
 
 
-def read_request(fc: int, start: int, count: int) -> bytes:
-    return struct.pack(">BHH", fc, start, count)
+def _read_discrete(unit: int, addr: int, count: int) -> bytes:
+    return struct.pack("!BHH", 0x02, addr, count)
 
 
-def write_single_coil_request(addr: int, value: bool) -> bytes:
+def _read_holding(unit: int, addr: int, count: int) -> bytes:
+    return struct.pack("!BHH", 0x03, addr, count)
+
+
+def _read_input(unit: int, addr: int, count: int) -> bytes:
+    return struct.pack("!BHH", 0x04, addr, count)
+
+
+def _write_coil(unit: int, addr: int, value: int) -> bytes:
+    # 0xFF00 = ON, 0x0000 = OFF
     val = 0xFF00 if value else 0x0000
-    return struct.pack(">BHH", FC_WRITE_SINGLE_COIL, addr, val)
+    return struct.pack("!BHH", 0x05, addr, val)
 
 
-def write_single_register_request(addr: int, value: int) -> bytes:
-    return struct.pack(">BHH", FC_WRITE_SINGLE_REGISTER, addr, value)
+def _write_reg(unit: int, addr: int, value: int) -> bytes:
+    return struct.pack("!BHH", 0x06, addr, value & 0xFFFF)
 
 
-def write_multiple_registers_request(start: int, values: List[int]) -> bytes:
-    body = struct.pack(">BHHB", FC_WRITE_MULTIPLE_REGISTERS, start, len(values), len(values) * 2)
-    body += b"".join(struct.pack(">H", v) for v in values)
+def _write_multi_regs(unit: int, addr: int, values: List[int]) -> bytes:
+    body = struct.pack("!BHHB", 0x10, addr, len(values), len(values) * 2)
+    for v in values:
+        body += struct.pack("!H", v & 0xFFFF)
     return body
 
 
-def parse_response(data: bytes) -> Optional[Dict]:
-    """Parse a Modbus/TCP response. Return {'fc': ..., 'data': ..., 'error': ...}."""
-    if len(data) < 9:
-        return None
-    txid, proto, length, unit = struct.unpack(">HHHB", data[:7])
-    pdu = data[7:]
-    if not pdu:
-        return None
-    fc = pdu[0]
-    # exception response has the high bit set
-    if fc & 0x80:
-        code = pdu[1] if len(pdu) > 1 else 0
-        return {"fc": fc & 0x7F, "unit": unit, "exception": code,
-                "exception_name": {
-                    1: "illegal function", 2: "illegal data address",
-                    3: "illegal data value", 4: "server device failure",
-                    5: "acknowledge", 6: "server device busy",
-                    8: "memory parity error", 10: "gateway path unavailable",
-                    11: "gateway target device failed",
-                }.get(code, "unknown")}
-    if fc in (FC_READ_COILS, FC_READ_DISCRETE_INPUTS):
-        if len(pdu) < 2:
-            return None
-        byte_count = pdu[1]
-        bits = []
-        for b in pdu[2:2+byte_count]:
-            for i in range(8):
-                bits.append(bool(b & (1 << i)))
-        return {"fc": fc, "unit": unit, "bits": bits}
-    if fc in (FC_READ_HOLDING_REGISTERS, FC_READ_INPUT_REGISTERS):
-        if len(pdu) < 2:
-            return None
-        byte_count = pdu[1]
-        regs = []
-        for i in range(2, 2 + byte_count, 2):
-            regs.append(struct.unpack(">H", pdu[i:i+2])[0])
-        return {"fc": fc, "unit": unit, "registers": regs}
-    if fc in (FC_WRITE_SINGLE_COIL, FC_WRITE_SINGLE_REGISTER,
-              FC_WRITE_MULTIPLE_COILS, FC_WRITE_MULTIPLE_REGISTERS):
-        if len(pdu) >= 5:
-            addr, val = struct.unpack(">HH", pdu[1:5])
-            return {"fc": fc, "unit": unit, "addr": addr, "value": val, "ok": True}
-    if fc == FC_REPORT_SERVER_ID:
-        if len(pdu) >= 2:
-            bc = pdu[1]
-            return {"fc": fc, "unit": unit, "server_id": pdu[2:2+bc].decode("utf-8", errors="replace")}
-    if fc == 0x2B:  # read device identification
-        return {"fc": fc, "unit": unit, "raw": pdu.hex()}
-    return {"fc": fc, "unit": unit, "raw": pdu.hex()}
-
-
-# ── socket helpers ──
-def tcp_probe(ip: str, port: int = 502, timeout: float = 2.0) -> bool:
+def _transact(host: str, port: int, unit: int, pdu: bytes, timeout: int = 5) -> Optional[bytes]:
     try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(timeout)
-        rc = s.connect_ex((ip, port))
-        s.close()
-        return rc == 0
-    except Exception:
-        return False
-
-
-def modbus_send(ip: str, port: int, unit_id: int, pdu: bytes,
-                timeout: float = 3.0) -> Optional[Dict]:
+        s = socket.create_connection((host, port), timeout=timeout)
+    except Exception as e:
+        return None
+    txid = int(time.time() * 1000) & 0xFFFF
+    pkt = _mbap(txid, unit, pdu)
     try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.sendall(pkt)
         s.settimeout(timeout)
-        if s.connect_ex((ip, port)) != 0:
+        # read MBAP header
+        head = s.recv(7)
+        if len(head) < 7:
             s.close()
             return None
-        txid = int(time.time() * 1000) & 0xFFFF
-        s.sendall(build_request(txid, unit_id, pdu))
-        data = b""
-        # read at least the MBAP header + response
-        while len(data) < 9:
-            chunk = s.recv(4096)
+        rtxid, rproto, rlen, runit = struct.unpack("!HHHB", head)
+        body = b""
+        while len(body) < rlen - 1:
+            chunk = s.recv(rlen - 1 - len(body))
             if not chunk:
                 break
-            data += chunk
+            body += chunk
         s.close()
-        return parse_response(data)
+        return body
     except Exception:
+        s.close()
         return None
 
 
-# ── commands ──
-def cmd_scan(cidr: str, ports: str, workers: int, out_file: str) -> int:
-    import ipaddress
-    try:
-        net = ipaddress.ip_network(cidr, strict=False)
-    except ValueError:
-        print_err("bad cidr: " + cidr)
-        return 2
+def _parse_read_bits(body: bytes) -> Optional[Tuple[int, List[int]]]:
+    """Returns (byte_count, [bit values])."""
+    if len(body) < 2:
+        return None
+    fc = body[0]
+    if fc & 0x80:
+        return None  # error
+    bc = body[1]
+    bits = []
+    for i in range(2, 2 + bc):
+        if i >= len(body):
+            break
+        for b in range(8):
+            bits.append((body[i] >> b) & 1)
+    return bc, bits
 
-    port_list = [int(p) for p in ports.split(",")] if ports else [502, 5020, 44818, 102]
-    hosts = [str(h) for h in net.hosts()][:1024]
 
-    print_info("Modbus / ICS port scan")
-    print_kv("cidr", cidr)
-    print_kv("hosts", str(len(hosts)))
-    print_kv("ports", ",".join(str(p) for p in port_list))
+def _parse_read_regs(body: bytes) -> Optional[List[int]]:
+    if len(body) < 2:
+        return None
+    fc = body[0]
+    if fc & 0x80:
+        return None
+    bc = body[1]
+    regs = []
+    for i in range(0, bc, 2):
+        if 2 + i + 1 >= len(body):
+            break
+        regs.append(struct.unpack("!H", body[2+i:2+i+2])[0])
+    return regs
+
+
+def _error_code(body: bytes) -> Optional[int]:
+    if len(body) >= 2 and (body[0] & 0x80):
+        return body[1]
+    return None
+
+
+# ── commands ───────────────────────────────────────────────────────────────
+
+def cmd_scan(host: str, port: int, unit_start: int, unit_end: int) -> int:
+    """Probe unit IDs 1-247 by trying a single read on each."""
+    print_info("modbus unit id scan")
+    print_kv("host", host + ":" + str(port))
+    print_kv("unit_range", str(unit_start) + ".." + str(unit_end))
     print()
 
-    hits: List[Dict] = []
-    t0 = time.time()
-
-    def probe(ip: str):
-        out = []
-        for port in port_list:
-            if tcp_probe(ip, port, timeout=1.5):
-                out.append((ip, port))
-        return out
-
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = [pool.submit(probe, ip) for ip in hosts]
-        done = 0
-        for f in as_completed(futures):
-            done += 1
-            for ip, port in f.result():
-                hits.append({"ip": ip, "port": port})
-                svc = {502: "modbus", 5020: "modbus-alt", 44818: "ethernet/ip", 102: "s7comm"}.get(port, "?")
-                print("  " + SCARLET + "▓ " + RESET + BONE + ip.ljust(16) + RESET
-                      + " " + ARTERY + str(port).ljust(6) + RESET + " " + ASH + svc + RESET)
-            if done % 64 == 0:
-                print("  " + ASH + "[" + str(done) + "/" + str(len(hosts)) + "]" + RESET + "        ", end="\r")
-
+    alive = []
+    for uid in range(unit_start, unit_end + 1):
+        body = _transact(host, port, uid, _read_holding(uid, 0, 1))
+        if body and len(body) >= 2 and not (body[0] & 0x80):
+            print("  " + SCARLET + "UNIT " + str(uid) + RESET + " — answered read holding reg 0")
+            alive.append(uid)
+        elif body and _error_code(body) is not None:
+            # error response = device is there, just refused this read
+            print("  " + ARTERY + "unit " + str(uid) + RESET + " — err code " + str(_error_code(body)))
+            alive.append(uid)
     print()
-    print_kv("elapsed", "{:.1f}s".format(time.time() - t0))
-    print_kv("found", len(hits))
-
-    out = Path(out_file) if out_file else MODBUS_DIR / ("scan_" + str(int(time.time())) + ".json")
-    out.write_text(json.dumps(hits, indent=2))
+    print_kv("units_responding", len(alive))
+    out = MODBUS_DIR / ("scan_" + host.replace(".", "_") + "_" + str(int(time.time())) + ".json")
+    MODBUS_DIR.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps({"host": host, "port": port, "units": alive}, indent=2))
     print_kv("saved", out)
     return 0
 
 
-def cmd_units(ip: str, port: int, unit_range: str, out_file: str) -> int:
-    if unit_range:
-        lo, _, hi = unit_range.partition("-")
-        start, end = int(lo), int(hi or lo)
+def cmd_read(host: str, port: int, unit: int, kind: str, addr: int, count: int) -> int:
+    if kind == "coils":
+        pdu = _read_coils(unit, addr, count)
+    elif kind == "discrete":
+        pdu = _read_discrete(unit, addr, count)
+    elif kind == "holding":
+        pdu = _read_holding(unit, addr, count)
+    elif kind == "input":
+        pdu = _read_input(unit, addr, count)
     else:
-        start, end = 0, 255
+        print_err("kind must be coils|discrete|holding|input")
+        return 1
 
-    print_info("Modbus unit ID enumeration")
-    print_kv("target", ip + ":" + str(port))
-    print_kv("units", str(start) + "-" + str(end))
-    print()
-
-    valid = []
-    for uid in range(start, end + 1):
-        # read 1 holding register — if we get a response at all, the unit is alive
-        resp = modbus_send(ip, port, uid, read_request(FC_READ_HOLDING_REGISTERS, 0, 1))
-        if resp and "exception" not in resp:
-            valid.append(uid)
-            print("  " + SCARLET + "▓ " + RESET + "unit " + BONE + str(uid) + RESET
-                  + "  " + ASH + "regs[0]=" + str(resp.get("registers", [None])[0]) + RESET)
-        elif resp and resp.get("exception") in (1, 2):
-            # illegal function or illegal address — the unit answered, so it exists
-            valid.append(uid)
-            print("  " + ARTERY + "░ " + RESET + "unit " + BONE + str(uid) + RESET
-                  + "  " + ASH + "answered exception " + str(resp["exception"]) + RESET)
-        time.sleep(0.02)
-
-    print()
-    print_kv("live units", len(valid))
-
-    out = Path(out_file) if out_file else MODBUS_DIR / ("units_" + ip.replace(".", "_") + ".json")
-    out.write_text(json.dumps({"target": ip, "port": port, "units": valid}, indent=2))
-    print_kv("saved", out)
-    return 0
-
-
-def cmd_read(ip: str, port: int, unit: int, fc: int, start: int, count: int,
-             out_file: str) -> int:
-    print_info("Modbus read")
-    print_kv("target", ip + ":" + str(port))
-    print_kv("unit", str(unit))
-    print_kv("fc", "0x{:02X}".format(fc))
-    print_kv("start", str(start))
-    print_kv("count", str(count))
-    print()
-
-    resp = modbus_send(ip, port, unit, read_request(fc, start, count), timeout=5.0)
-    if not resp:
+    body = _transact(host, port, unit, pdu)
+    if body is None:
         print_err("no response")
         return 1
-    if "exception" in resp:
-        print_err("exception " + str(resp["exception"]) + ": " + resp["exception_name"])
+    err = _error_code(body)
+    if err is not None:
+        print_err("modbus exception code " + str(err))
         return 1
 
-    if "registers" in resp:
-        for i, r in enumerate(resp["registers"]):
-            addr = start + i
-            print("  " + BONE + str(addr).ljust(6) + RESET + "  "
-                  + SCARLET + str(r).ljust(8) + RESET + "  "
-                  + ASH + "0x{:04X}".format(r) + RESET + "  "
-                  + CLOT + repr(chr(r) if 32 <= r < 127 else ".") + RESET)
-    elif "bits" in resp:
-        for i, b in enumerate(resp["bits"]):
-            addr = start + i
-            print("  " + BONE + str(addr).ljust(6) + RESET + "  "
-                  + (SCARLET + "TRUE" if b else ASH + "false") + RESET)
-
-    out = Path(out_file) if out_file else MODBUS_DIR / ("read_" + ip.replace(".", "_") + "_" + str(int(time.time())) + ".json")
-    out.write_text(json.dumps(resp, indent=2))
+    print_info("modbus read")
+    print_kv("host", host + ":" + str(port))
+    print_kv("unit", unit)
+    print_kv("kind", kind)
+    print_kv("start", addr)
+    print_kv("count", count)
     print()
-    print_kv("saved", out)
+
+    if kind in ("coils", "discrete"):
+        r = _parse_read_bits(body)
+        if not r:
+            print_err("parse failed")
+            return 1
+        _, bits = r
+        for i, b in enumerate(bits[:count]):
+            print("  " + BONE + str(addr + i).ljust(6) + RESET + " " + (SCARLET + "1" + RESET if b else ASH + "0" + RESET))
+    else:
+        regs = _parse_read_regs(body)
+        if regs is None:
+            print_err("parse failed")
+            return 1
+        for i, v in enumerate(regs):
+            signed = v - 0x10000 if v >= 0x8000 else v
+            print("  " + BONE + str(addr + i).ljust(6) + RESET + " " + SCARLET + str(v) + RESET + " " + ASH + "(0x" + format(v, "04x") + " " + str(signed) + ")" + RESET)
     return 0
 
 
-def cmd_write(ip: str, port: int, unit: int, kind: str, addr: int, value: str,
-              out_file: str) -> int:
-    print_info("Modbus write")
-    print_kv("target", ip + ":" + str(port))
-    print_kv("unit", str(unit))
-    print_kv("kind", kind)
-    print_kv("addr", str(addr))
-    print_kv("value", value)
-    print()
-    print_warn("this writes to a live device. interruptions can trip safety systems.")
-
-    pdu = None
+def cmd_write(host: str, port: int, unit: int, kind: str, addr: int,
+              value: str, dry_run: bool) -> int:
     if kind == "coil":
-        v = value.strip().lower() in ("1", "true", "on", "yes")
-        pdu = write_single_coil_request(addr, v)
+        try:
+            v = int(value, 0)
+        except ValueError:
+            v = 1 if value.lower() in ("on", "true", "1") else 0
+        pdu = _write_coil(unit, addr, v)
+        desc = "coil " + str(addr) + " = " + ("ON" if v else "OFF")
     elif kind == "register":
-        pdu = write_single_register_request(addr, int(value))
+        try:
+            v = int(value, 0)
+        except ValueError:
+            print_err("value must be integer (0x.. or decimal)")
+            return 1
+        pdu = _write_reg(unit, addr, v)
+        desc = "register " + str(addr) + " = " + str(v)
     elif kind == "registers":
-        vals = [int(x.strip()) for x in value.split(",")]
-        pdu = write_multiple_registers_request(addr, vals)
+        try:
+            values = [int(x, 0) for x in value.split(",")]
+        except ValueError:
+            print_err("registers value must be comma-separated ints")
+            return 1
+        pdu = _write_multi_regs(unit, addr, values)
+        desc = "registers " + str(addr) + ".." + str(addr + len(values) - 1) + " = " + str(values)
     else:
-        print_err("kind must be coil / register / registers")
-        return 2
+        print_err("kind must be coil|register|registers")
+        return 1
 
-    resp = modbus_send(ip, port, unit, pdu, timeout=5.0)
-    if not resp:
+    print_info("modbus write" + (" (DRY RUN)" if dry_run else ""))
+    print_kv("host", host + ":" + str(port))
+    print_kv("unit", unit)
+    print_kv("op", desc)
+    if dry_run:
+        print()
+        print_warn("dry-run: no packet sent")
+        return 0
+
+    body = _transact(host, port, unit, pdu)
+    if body is None:
         print_err("no response")
         return 1
-    if "exception" in resp:
-        print_err("exception " + str(resp["exception"]) + ": " + resp["exception_name"])
+    err = _error_code(body)
+    if err is not None:
+        print_err("modbus exception code " + str(err))
         return 1
-
-    print_ok("write accepted")
-    out = Path(out_file) if out_file else MODBUS_DIR / ("write_" + ip.replace(".", "_") + "_" + str(int(time.time())) + ".json")
-    out.write_text(json.dumps({"target": ip, "port": port, "unit": unit,
-                               "kind": kind, "addr": addr, "value": value,
-                               "resp": resp}, indent=2))
-    print_kv("saved", out)
+    print_ok("write acknowledged")
     return 0
 
 
-def cmd_enumerate(ip: str, port: int, unit: int, kind: str, block: int,
-                  max_addr: int, out_file: str) -> int:
-    """Walk the address space block-by-block and report populated ranges."""
-    fc = {"coils": 0x01, "discrete": 0x02, "holding": 0x03, "input": 0x04}.get(kind)
-    if fc is None:
-        print_err("kind must be coils / discrete / holding / input")
-        return 2
+def cmd_dump(host: str, port: int, unit: int, addr: int, count: int) -> int:
+    """Read a span of holding registers, print as a grid."""
+    regs = []
+    remaining = count
+    start = addr
+    while remaining > 0:
+        chunk = min(125, remaining)  # modbus max per request
+        body = _transact(host, port, unit, _read_holding(unit, start, chunk))
+        if body is None:
+            break
+        r = _parse_read_regs(body)
+        if not r:
+            break
+        regs.extend(r)
+        start += len(r)
+        remaining -= len(r)
+        if len(r) == 0:
+            break
 
-    print_info("Modbus address space enumeration")
-    print_kv("target", ip + ":" + str(port))
-    print_kv("unit", str(unit))
-    print_kv("kind", kind)
-    print_kv("block size", str(block))
-    print_kv("max addr", str(max_addr))
+    print_info("holding register dump")
+    print_kv("host", host + ":" + str(port))
+    print_kv("unit", unit)
+    print_kv("start", addr)
+    print_kv("count", len(regs))
     print()
+    for i in range(0, len(regs), 8):
+        line = "  " + ASH + str(addr + i).zfill(5) + RESET + "  "
+        for j in range(i, min(i + 8, len(regs))):
+            line += BONE + format(regs[j], "04x") + " " + RESET
+        print(line)
 
-    populated = []
-    for start in range(0, max_addr, block):
-        resp = modbus_send(ip, port, unit, read_request(fc, start, block), timeout=3.0)
-        if not resp or "exception" in resp:
-            continue
-        if "registers" in resp:
-            regs = resp["registers"]
-            non_zero = [(start + i, r) for i, r in enumerate(regs) if r != 0]
-            if non_zero:
-                populated.append({"start": start, "end": start + block - 1,
-                                  "non_zero": len(non_zero),
-                                  "sample": [{"addr": a, "value": v} for a, v in non_zero[:5]]})
-                print("  " + SCARLET + "▓ " + RESET + BONE + "regs " + str(start).ljust(6)
-                      + "-" + str(start + block - 1).ljust(6) + RESET
-                      + "  " + ASH + str(len(non_zero)) + " non-zero" + RESET)
-        elif "bits" in resp:
-            bits = resp["bits"]
-            true_count = sum(1 for b in bits if b)
-            if true_count:
-                populated.append({"start": start, "end": start + block - 1,
-                                  "true_count": true_count})
-                print("  " + SCARLET + "▓ " + RESET + BONE + "bits " + str(start).ljust(6)
-                      + "-" + str(start + block - 1).ljust(6) + RESET
-                      + "  " + ASH + str(true_count) + " true" + RESET)
-        time.sleep(0.02)
-
-    print()
-    print_kv("populated blocks", len(populated))
-
-    out = Path(out_file) if out_file else MODBUS_DIR / ("enum_" + ip.replace(".", "_") + "_" + kind + ".json")
-    out.write_text(json.dumps({"target": ip, "kind": kind, "populated": populated}, indent=2))
-    print_kv("saved", out)
-    return 0
-
-
-def cmd_probe(ip: str, port: int, unit: int, out_file: str) -> int:
-    """Send each function code and log what the device accepts."""
-    print_info("Modbus function code probe")
-    print_kv("target", ip + ":" + str(port))
-    print_kv("unit", str(unit))
-    print()
-
-    probes = [
-        ("read coils (1 reg)", FC_READ_COILS, read_request(FC_READ_COILS, 0, 1)),
-        ("read discrete (1 bit)", FC_READ_DISCRETE_INPUTS, read_request(FC_READ_DISCRETE_INPUTS, 0, 1)),
-        ("read holding (1 reg)", FC_READ_HOLDING_REGISTERS, read_request(FC_READ_HOLDING_REGISTERS, 0, 1)),
-        ("read input (1 reg)", FC_READ_INPUT_REGISTERS, read_request(FC_READ_INPUT_REGISTERS, 0, 1)),
-        ("report server id", FC_REPORT_SERVER_ID, struct.pack(">B", FC_REPORT_SERVER_ID)),
-        ("read device id (0x2B/0x0E)", FC_READ_DEVICE_IDENTIFICATION,
-         struct.pack(">BBBB", FC_READ_DEVICE_IDENTIFICATION, 0x0E, 0x01, 0x00)),
-    ]
-    results = []
-    for name, fc, pdu in probes:
-        resp = modbus_send(ip, port, unit, pdu, timeout=3.0)
-        if resp and "exception" not in resp:
-            print("  " + SCARLET + "▓ " + RESET + BONE + name.ljust(30) + RESET
-                  + " " + ARTERY + "accepted" + RESET)
-        elif resp and "exception" in resp:
-            print("  " + ASH + "░ " + name.ljust(30) + " exception " + str(resp["exception"]) + RESET)
-        else:
-            print("  " + ASH + "░ " + name.ljust(30) + " no response" + RESET)
-        results.append({"name": name, "fc": fc, "resp": resp})
-        time.sleep(0.05)
-
-    out = Path(out_file) if out_file else MODBUS_DIR / ("probe_" + ip.replace(".", "_") + ".json")
-    out.write_text(json.dumps(results, indent=2))
+    out = MODBUS_DIR / ("dump_" + host.replace(".", "_") + "_" + str(unit) + "_" + str(int(time.time())) + ".json")
+    MODBUS_DIR.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps({"host": host, "port": port, "unit": unit,
+                                "start": addr, "regs": regs}, indent=2))
     print()
     print_kv("saved", out)
     return 0
@@ -412,63 +314,85 @@ def cmd_probe(ip: str, port: int, unit: int, out_file: str) -> int:
 
 def run_cli(args):
     import argparse
-    p = argparse.ArgumentParser(prog="redsky ics modbus", add_help=False)
-    p.add_argument("-h", "--help", action="store_true")
-    p.add_argument("action", nargs="?", default="help",
-                   choices=["scan", "units", "read", "write", "enumerate", "probe", "help"])
-    p.add_argument("target", nargs="?", default="")
-    p.add_argument("--cidr", default="")
-    p.add_argument("--ports", default="")
-    p.add_argument("--port", type=int, default=502)
-    p.add_argument("--unit", type=int, default=1)
-    p.add_argument("--units", default="")
-    p.add_argument("--fc", type=lambda s: int(s, 0), default=0x03)
-    p.add_argument("--start", type=int, default=0)
-    p.add_argument("--count", type=int, default=10)
-    p.add_argument("--kind", default="holding")
-    p.add_argument("--addr", type=int, default=0)
-    p.add_argument("--value", default="")
-    p.add_argument("--block", type=int, default=16)
-    p.add_argument("--max-addr", type=int, default=4096)
-    p.add_argument("--workers", type=int, default=128)
-    p.add_argument("--out", default="")
+    sub = args[0] if args else "help"
+    rest = args[1:] if args else []
 
-    try:
-        ns = p.parse_args(args)
-    except SystemExit:
-        print_err("usage: redsky ics modbus <scan|units|read|write|enumerate|probe> [opts]")
-        return 2
-
-    if ns.action == "help" or ns.help:
-        print_info("scan --cidr 10.0.0.0/24 [--ports 502,5020] [--workers 128]")
-        print_info("units <ip> [--units 0-255] [--port 502]")
-        print_info("read <ip> --unit 1 --fc 3 --start 0 --count 10")
-        print_info("write <ip> --unit 1 --kind coil --addr 0 --value 1")
-        print_info("enumerate <ip> --unit 1 --kind holding --block 16 --max-addr 4096")
-        print_info("probe <ip> --unit 1")
+    if sub in ("-h", "--help", "help"):
+        print_info("redsky ics modbus <sub-command>")
+        print_info("")
+        print_info("  scan --host H [--port 502] [--from 1] [--to 247]")
+        print_info("      probe unit IDs by firing a read on each")
+        print_info("  read --host H --unit N --kind coils|discrete|holding|input --addr A --count C")
+        print_info("  write --host H --unit N --kind coil|register|registers --addr A --value V [--dry-run]")
+        print_info("  dump --host H --unit N --addr A --count C")
+        print_info("      read a span of holding registers, print hex grid")
         return 0
 
-    if ns.action == "scan":
-        if not ns.cidr:
-            print_err("--cidr required")
+    base = argparse.ArgumentParser(add_help=False)
+    base.add_argument("--host", required=False, default="")
+    base.add_argument("--port", type=int, default=502)
+    base.add_argument("--unit", type=int, default=1)
+
+    if sub == "scan":
+        p = argparse.ArgumentParser(prog="redsky ics modbus scan", parents=[base], add_help=False)
+        p.add_argument("--from", dest="ufrom", type=int, default=1)
+        p.add_argument("--to", dest="uto", type=int, default=247)
+        try:
+            ns = p.parse_args(rest)
+        except SystemExit:
+            print_err("usage: redsky ics modbus scan --host H [--from 1 --to 247]")
             return 2
-        return cmd_scan(ns.cidr, ns.ports, ns.workers, ns.out)
-    if not ns.target:
-        print_err("target ip required")
-        return 2
-    if ns.action == "units":
-        return cmd_units(ns.target, ns.port, ns.units, ns.out)
-    if ns.action == "read":
-        return cmd_read(ns.target, ns.port, ns.unit, ns.fc, ns.start, ns.count, ns.out)
-    if ns.action == "write":
-        if not ns.value:
-            print_err("--value required")
+        if not ns.host:
+            print_err("--host required")
             return 2
-        return cmd_write(ns.target, ns.port, ns.unit, ns.kind, ns.addr, ns.value, ns.out)
-    if ns.action == "enumerate":
-        return cmd_enumerate(ns.target, ns.port, ns.unit, ns.kind, ns.block, ns.max_addr, ns.out)
-    if ns.action == "probe":
-        return cmd_probe(ns.target, ns.port, ns.unit, ns.out)
+        return cmd_scan(ns.host, ns.port, ns.ufrom, ns.uto)
+
+    if sub == "read":
+        p = argparse.ArgumentParser(prog="redsky ics modbus read", parents=[base], add_help=False)
+        p.add_argument("--kind", default="holding", choices=["coils", "discrete", "holding", "input"])
+        p.add_argument("--addr", type=int, default=0)
+        p.add_argument("--count", type=int, default=16)
+        try:
+            ns = p.parse_args(rest)
+        except SystemExit:
+            print_err("usage: redsky ics modbus read --host H --unit N --kind holding --addr A --count C")
+            return 2
+        if not ns.host:
+            print_err("--host required")
+            return 2
+        return cmd_read(ns.host, ns.port, ns.unit, ns.kind, ns.addr, ns.count)
+
+    if sub == "write":
+        p = argparse.ArgumentParser(prog="redsky ics modbus write", parents=[base], add_help=False)
+        p.add_argument("--kind", default="register", choices=["coil", "register", "registers"])
+        p.add_argument("--addr", type=int, default=0)
+        p.add_argument("--value", required=False, default="")
+        p.add_argument("--dry-run", action="store_true")
+        try:
+            ns = p.parse_args(rest)
+        except SystemExit:
+            print_err("usage: redsky ics modbus write --host H --unit N --kind register --addr A --value V")
+            return 2
+        if not ns.host or ns.value == "":
+            print_err("--host and --value required")
+            return 2
+        return cmd_write(ns.host, ns.port, ns.unit, ns.kind, ns.addr, ns.value, ns.dry_run)
+
+    if sub == "dump":
+        p = argparse.ArgumentParser(prog="redsky ics modbus dump", parents=[base], add_help=False)
+        p.add_argument("--addr", type=int, default=0)
+        p.add_argument("--count", type=int, default=100)
+        try:
+            ns = p.parse_args(rest)
+        except SystemExit:
+            print_err("usage: redsky ics modbus dump --host H --unit N --addr A --count C")
+            return 2
+        if not ns.host:
+            print_err("--host required")
+            return 2
+        return cmd_dump(ns.host, ns.port, ns.unit, ns.addr, ns.count)
+
+    print_err("unknown modbus sub-command: " + sub)
     return 2
 
 
