@@ -82,6 +82,8 @@ const (
 	TypeProxyChainData  MessageType = "proxychain_data"
 	TypeCSIntStart      MessageType = "csint_start"
 	TypeCSIntData       MessageType = "csint_data"
+	TypeBluetoothStart  MessageType = "bluetooth_start"
+	TypeBluetoothData   MessageType = "bluetooth_data"
 	TypeWirelessStop    MessageType = "wireless_stop"
 	TypeWirelessData    MessageType = "wireless_data"
 	TypeWirelessDone    MessageType = "wireless_done"
@@ -760,4 +762,24 @@ type CSIntData struct {
 	Terms     []string `json:"terms,omitempty"`
 	Error     string   `json:"error,omitempty"`
 	Done      bool     `json:"done"`
+}
+
+// BluetoothStart drives the RF Bluetooth primitives on the agent.
+type BluetoothStart struct {
+	SessionID string `json:"session_id"`
+	Action    string `json:"action"` // scan|info
+	Address   string `json:"address,omitempty"`
+	Duration  int    `json:"duration,omitempty"` // seconds
+}
+
+// BluetoothData streams one device per message.
+type BluetoothData struct {
+	SessionID string `json:"session_id"`
+	Address   string `json:"address,omitempty"`
+	Name      string `json:"name,omitempty"`
+	RSSI      int    `json:"rssi,omitempty"`
+	Paired    bool   `json:"paired,omitempty"`
+	Trusted   bool   `json:"trusted,omitempty"`
+	Error     string `json:"error,omitempty"`
+	Done      bool   `json:"done"`
 }

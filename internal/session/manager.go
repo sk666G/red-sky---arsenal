@@ -641,3 +641,9 @@ func (s *Session) SendCSIntStart(sessionID string, req proto.CSIntStart) error {
 	req.SessionID = sessionID
 	return s.sendTunnelMsg(proto.TypeCSIntStart, req)
 }
+
+// SendBluetoothStart drives the RF Bluetooth primitives on the agent.
+func (s *Session) SendBluetoothStart(sessionID string, req proto.BluetoothStart) error {
+	req.SessionID = sessionID
+	return s.sendTunnelMsg(proto.TypeBluetoothStart, req)
+}

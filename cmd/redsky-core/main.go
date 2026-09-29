@@ -188,6 +188,9 @@ func main() {
 	csintRoot := flag.String("csint-root", "", "directory to index")
 	csintQuery := flag.String("csint-query", "", "search query")
 	csintIndexPath := flag.String("csint-index", "", "index file path (default: <root>/.rs_csint.json)")
+	btAction := flag.String("bluetooth", "", "bluetooth action: scan|info")
+	btAddress := flag.String("bluetooth-address", "", "device MAC (info)")
+	btDuration := flag.Int("bluetooth-duration", 10, "scan duration (seconds)")
 	pmkidIface := flag.String("pmkid", "", "802.11 PMKID harvest: monitor-mode iface")
 	pmkidChannel := flag.Int("pmkid-channel", 0, "PMKID: set wifi channel before harvest")
 	pmkidDuration := flag.Duration("pmkid-duration", 60*time.Second, "PMKID: total harvest run time")
@@ -665,6 +668,15 @@ func main() {
 			Root:      *csintRoot,
 			Query:     *csintQuery,
 			IndexPath: *csintIndexPath,
+		})
+	}
+
+	// bluetooth dispatch — RF Bluetooth primitives on the first agent
+	if *btAction != "" {
+		go runBluetoothDispatch(mgr, bluetoothArgs{
+			Action:   *btAction,
+			Address:  *btAddress,
+			Duration: *btDuration,
 		})
 	}
 
@@ -1700,5 +1712,31 @@ func runCSIntDispatch(mgr *session.Manager, a csintArgs) {
 	}
 	if err := s.SendCSIntStart(sessionID, req); err != nil {
 		log.Printf("[csint] start: %v", err)
+	}
+}
+
+// bluetoothArgs carries the operator's -bluetooth* flags.
+type bluetoothArgs struct {
+	Action   string
+	Address  string
+	Duration int
+}
+
+// runBluetoothDispatch waits for the first agent, sends a BluetoothStart.
+func runBluetoothDispatch(mgr *session.Manager, a bluetoothArgs) {
+	for len(mgr.Sessions()) == 0 {
+		time.Sleep(500 * time.Millisecond)
+	}
+	s := mgr.Sessions()[0]
+	sessionID := fmt.Sprintf("bt-%d", time.Now().UnixNano())
+	log.Printf("[bluetooth] %s addr=%q -> %s", a.Action, a.Address, s.AgentID)
+	req := proto.BluetoothStart{
+		SessionID: sessionID,
+		Action:    a.Action,
+		Address:   a.Address,
+		Duration:  a.Duration,
+	}
+	if err := s.SendBluetoothStart(sessionID, req); err != nil {
+		log.Printf("[bluetooth] start: %v", err)
 	}
 }

