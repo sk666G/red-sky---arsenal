@@ -1,11 +1,20 @@
-# language: Python, file: Program/crypto/hash_crack.py, target: Red Sky crypto — hash ID + attack planner
-# Identifies a hash from its format/length/charset, maps it to hashcat -m and
-# john --format, suggests the fastest attack (wordlist, rules, mask, combinator),
-# and can generate a mask from the hash type. Also parses /etc/shadow-style
-# composite hashes and Kerberos ticket hashes ($krb5asrep$, $krb5tgs$).
+# language: Python, file: Program/crypto/hash_crack.py, target: Red Sky crypto — hash cracking
+# Hash identification + cracking. Two paths:
+#
+#   1. Hashcat / John wrappers. Detect which is on PATH, shell with the right
+#      mode (-m for hashcat, --format for john). Handle the common modes:
+#      md5, sha1, sha256, sha512, ntlm, netntlmv2, bcrypt, md5crypt,
+#      sha512crypt, argon2.
+#
+#   2. Pure-python fallback for the un-salted fast hashes (md5, sha1,
+#      sha256, sha512, ntlm). Runs a wordlist through hashlib and reports
+#      hits. Slow but works without external tools.
 
-import json
+import hashlib
+import os
 import re
+import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -18,301 +27,296 @@ from Program.utils.paths import OUTPUT_DIR
 
 CRYPTO_DIR = OUTPUT_DIR / "crypto"
 HASH_DIR = CRYPTO_DIR / "hash"
-HASH_DIR.mkdir(parents=True, exist_ok=True)
 
 
-# ── hash database ──
-# Each entry: name, regex or length+charset, hashcat mode, john format, notes
-HASH_DB: List[Dict] = [
-    # md5 / sha family
-    {"name": "MD5",            "regex": r"^[a-f0-9]{32}$",            "hc": "0",     "john": "raw-md5",       "notes": "32 hex"},
-    {"name": "MD5 (half)",     "regex": r"^[a-f0-9]{16}$",            "hc": "5100",  "john": "half-md5",      "notes": "16 hex"},
-    {"name": "SHA-1",          "regex": r"^[a-f0-9]{40}$",            "hc": "100",   "john": "raw-sha1",      "notes": "40 hex"},
-    {"name": "SHA-224",        "regex": r"^[a-f0-9]{56}$",            "hc": "1300",  "john": "raw-sha224",    "notes": "56 hex"},
-    {"name": "SHA-256",        "regex": r"^[a-f0-9]{64}$",            "hc": "1400",  "john": "raw-sha256",    "notes": "64 hex"},
-    {"name": "SHA-384",        "regex": r"^[a-f0-9]{96}$",            "hc": "10800", "john": "raw-sha384",    "notes": "96 hex"},
-    {"name": "SHA-512",        "regex": r"^[a-f0-9]{128}$",           "hc": "1700",  "john": "raw-sha512",    "notes": "128 hex"},
-    {"name": "SHA3-256",       "regex": r"^[a-f0-9]{64}$",            "hc": "17400", "john": "raw-sha3-256",  "notes": "same length as SHA-256"},
-    {"name": "SHA3-512",       "regex": r"^[a-f0-9]{128}$",           "hc": "17600", "john": "raw-sha3-512",  "notes": "same length as SHA-512"},
-    {"name": "BLAKE2b-256",    "regex": r"^[a-f0-9]{64}$",            "hc": "600",   "john": "raw-blake2b-256","notes": ""},
-    {"name": "BLAKE2b-512",    "regex": r"^[a-f0-9]{128}$",           "hc": "610",   "john": "raw-blake2b-512","notes": ""},
-
-    # base64-encoded (may be b64 of a binary hash)
-    {"name": "MD5 (base64)",   "regex": r"^[A-Za-z0-9+/]{22}==$",     "hc": "0",     "john": "raw-md5",       "notes": "b64 of 16 bytes"},
-    {"name": "SHA-1 (base64)", "regex": r"^[A-Za-z0-9+/]{27}=$",      "hc": "100",   "john": "raw-sha1",      "notes": "b64 of 20 bytes"},
-    {"name": "SHA-256 (base64)","regex": r"^[A-Za-z0-9+/]{43}=$",     "hc": "1400",  "john": "raw-sha256",    "notes": "b64 of 32 bytes"},
-
-    # bcrypt / scrypt / argon2
-    {"name": "bcrypt",         "regex": r"^\$2[aby]?\$\d{2}\$[./A-Za-z0-9]{53}$",  "hc": "3200",  "john": "bcrypt",    "notes": "Blowfish, $2a$/$2b$/$2y$ prefix"},
-    {"name": "scrypt",         "regex": r"^\$7\$",                                  "hc": "8900",  "john": "scrypt",    "notes": "aix-style scrypt"},
-    {"name": "argon2i",        "regex": r"^\$argon2i\$",                            "hc": "13300", "john": "argon2",    "notes": "argon2i"},
-    {"name": "argon2id",       "regex": r"^\$argon2id\$",                           "hc": "13400", "john": "argon2",    "notes": "argon2id (default)"},
-
-    # unix crypt / shadow
-    {"name": "descrypt",       "regex": r"^[./A-Za-z0-9]{13}$",       "hc": "1500",  "john": "descrypt",   "notes": "classic 13-char crypt(3)"},
-    {"name": "md5crypt",       "regex": r"^\$1\$",                    "hc": "500",   "john": "md5crypt",   "notes": "$1$"},
-    {"name": "sha256crypt",    "regex": r"^\$5\$",                    "hc": "7400",  "john": "sha256crypt","notes": "$5$"},
-    {"name": "sha512crypt",    "regex": r"^\$6\$",                    "hc": "1800",  "john": "sha512crypt","notes": "$6$ (default on modern Linux)"},
-    {"name": "yescrypt",       "regex": r"^\$y\$",                    "hc": "15900", "john": "yescrypt",   "notes": "$y$ (Debian/Ubuntu default)"},
-
-    # windows / AD
-    {"name": "NTLM",           "regex": r"^[a-f0-9]{32}$",            "hc": "1000",  "john": "nt",         "notes": "same format as MD5 — try both"},
-    {"name": "LM",             "regex": r"^[a-f0-9]{32}$",            "hc": "3000",  "john": "lm",         "notes": ""},
-    {"name": "NetNTLMv1",      "regex": r"^[A-Za-z0-9+/=]+::[A-Za-z0-9+/=]+:[a-f0-9]+$",  "hc": "5500", "john": "netntlm", "notes": ""},
-    {"name": "NetNTLMv2",      "regex": r"^[^:]+::[^:]+:[a-f0-9]+:[a-f0-9]+:[a-f0-9]+$", "hc": "5600", "john": "netntlmv2","notes": ""},
-    {"name": "Kerberos AS-REP","regex": r"^\$krb5asrep\$",            "hc": "18200", "john": "krb5asrep",  "notes": "AS-REP roast"},
-    {"name": "Kerberos TGS",   "regex": r"^\$krb5tgs\$",              "hc": "13100", "john": "krb5tgs",    "notes": "Kerberoast"},
-
-    # hashes with prefixes
-    {"name": "phpBB3",         "regex": r"^\$H\$",                    "hc": "400",   "john": "phpbb3",     "notes": ""},
-    {"name": "Drupal7",        "regex": r"^\$S\$",                    "hc": "7900",  "john": "drupal7",    "notes": ""},
-    {"name": "Joomla",         "regex": r"^[a-f0-9]{32}:[A-Za-z0-9]{32}$", "hc": "11", "john": "joomla",   "notes": ""},
-    {"name": "WordPress",      "regex": r"^\$P\$",                    "hc": "400",   "john": "phpass",     "notes": "phpass portable"},
-    {"name": "vBulletin",      "regex": r"^[a-f0-9]{32}:[a-f0-9]{3,}$", "hc": "2611", "john": "vbulletin", "notes": ""},
-
-    # django / flask
-    {"name": "Django (pbkdf2)","regex": r"^pbkdf2_sha256\$",          "hc": "10000", "john": "django",     "notes": ""},
-    {"name": "Django (sha1)",  "regex": r"^sha1\$",                    "hc": "124",   "john": "django",     "notes": ""},
-    {"name": "Werkzeug",       "regex": r"^pbkdf2:sha256:",            "hc": "10900", "john": "werkzeug",   "notes": "Flask default"},
-
-    # database
-    {"name": "MySQL 4.1+",     "regex": r"^\*[A-F0-9]{40}$",          "hc": "300",   "john": "mysql-sha1", "notes": "starts with *"},
-    {"name": "MySQL <4.1",     "regex": r"^[a-f0-9]{16}$",            "hc": "200",   "john": "mysql",      "notes": "old"},
-    {"name": "PostgreSQL",     "regex": r"^md5[a-f0-9]{32}$",         "hc": "12",    "john": "postgres",   "notes": "md5 prefix"},
-
-    # misc
-    {"name": "Cisco IOS",      "regex": r"^\$1\$[^$]*\$",             "hc": "500",   "john": "md5crypt",   "notes": "same as md5crypt"},
-    {"name": "Cisco ASA",      "regex": r"^[A-Za-z0-9+/]{40,}$",      "hc": "9300",  "john": "asa",        "notes": ""},
-    {"name": "APR1-MD5",       "regex": r"^\$apr1\$",                 "hc": "1600",  "john": "md5crypt",   "notes": "Apache htpasswd"},
+# Hash signature catalog. Each entry: (label, regex, hashcat_mode, john_format).
+# regex matches the hex/base64 shape.
+SIGNATURES: List[Tuple[str, re.Pattern, str, str]] = [
+    ("md5",         re.compile(r"^[a-fA-F0-9]{32}$"),                          "0",    "raw-md5"),
+    ("sha1",        re.compile(r"^[a-fA-F0-9]{40}$"),                          "100",  "raw-sha1"),
+    ("sha224",      re.compile(r"^[a-fA-F0-9]{56}$"),                          "1300", "raw-sha224"),
+    ("sha256",      re.compile(r"^[a-fA-F0-9]{64}$"),                          "1400", "raw-sha256"),
+    ("sha384",      re.compile(r"^[a-fA-F0-9]{96}$"),                          "10800","raw-sha384"),
+    ("sha512",      re.compile(r"^[a-fA-F0-9]{128}$"),                         "1700", "raw-sha512"),
+    ("ntlm",        re.compile(r"^[a-fA-F0-9]{32}$"),                          "1000", "nt"),
+    ("mysql4",      re.compile(r"^[a-fA-F0-9]{16}$"),                          "200",  "mysql"),
+    ("bcrypt",      re.compile(r"^\$2[abxy]\$\d\d\$[./A-Za-z0-9]{53}$"),       "3200", "bcrypt"),
+    ("md5crypt",    re.compile(r"^\$1\$[./A-Za-z0-9]{1,8}\$[./A-Za-z0-9]{22}$"),"500",  "md5crypt"),
+    ("sha256crypt", re.compile(r"^\$5\$[./A-Za-z0-9]{1,16}\$[./A-Za-z0-9]{43}$"),"7400", "sha256crypt"),
+    ("sha512crypt", re.compile(r"^\$6\$[./A-Za-z0-9]{1,16}\$[./A-Za-z0-9]{86}$"),"1800", "sha512crypt"),
+    ("argon2",      re.compile(r"^\$argon2(id|i|d)\$"),                        "32000","argon2"),
+    ("netntlmv2",   re.compile(r"^[A-Za-z0-9+/=]+::[A-Za-z0-9:]+$"),            "5600", "netntlmv2"),
+    ("phpass",      re.compile(r"^\$P\$[./A-Za-z0-9]{31}$"),                    "400",  "phpass"),
+    ("django",      re.compile(r"^[a-z0-9]+\$[a-fA-F0-9]+\$[a-fA-F0-9]+$"),       "",     "django"),
+    ("jwt_hs256",   re.compile(r"^eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$"), "16500", "jwt"),
 ]
 
 
-def identify(h: str) -> List[Dict]:
-    h = h.strip()
-    hits = []
-    for entry in HASH_DB:
-        if entry.get("regex"):
-            if re.match(entry["regex"], h):
-                hits.append(entry)
-        elif entry.get("len"):
-            if len(h) == entry["len"] and re.match(r"^[a-f0-9]+$", h, re.I):
-                hits.append(entry)
-    return hits
+PY_HASHERS = {
+    "md5":    hashlib.md5,
+    "sha1":   hashlib.sha1,
+    "sha224": hashlib.sha224,
+    "sha256": hashlib.sha256,
+    "sha384": hashlib.sha384,
+    "sha512": hashlib.sha512,
+}
 
 
-def cmd_id(hash_str: str, out_file: str) -> int:
-    h = hash_str.strip()
+def detect(h: str) -> List[Dict[str, str]]:
+    """Return every signature that matches. Some shapes are ambiguous (md5 vs
+    ntlm both 32 hex) — return all so the operator picks."""
+    matches = []
+    for label, rx, hc, jn in SIGNATURES:
+        if rx.match(h):
+            matches.append({"label": label, "hashcat_mode": hc, "john_format": jn})
+    return matches
+
+
+def ntlm_hash(pw: str) -> str:
+    return hashlib.new("md4", pw.encode("utf-16le")).hexdigest()
+
+
+def _which(*names: str) -> Optional[str]:
+    for n in names:
+        p = shutil.which(n)
+        if p:
+            return p
+    return None
+
+
+def _run(cmd: List[str], timeout: int = 3600) -> Tuple[int, str, str]:
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return p.returncode, p.stdout, p.stderr
+    except subprocess.TimeoutExpired:
+        return 124, "", "timeout"
+    except FileNotFoundError as e:
+        return 127, "", str(e)
+
+
+# ── commands ───────────────────────────────────────────────────────────────
+
+def cmd_identify(h: str) -> int:
     if not h:
-        print_err("give a hash string")
-        return 2
-
-    print_info("hash identification")
-    print_kv("input", h[:100] + ("..." if len(h) > 100 else ""))
-    print_kv("length", str(len(h)))
-    print()
-
-    hits = identify(h)
-    if not hits:
-        print_warn("no direct match in the database")
-        print_info("try one of these tools for a second opinion:")
-        print_info("  hashid -m " + h[:40] + "...")
-        print_info("  haiti " + h[:40] + "...")
+        print_err("--hash required")
         return 1
-
-    print_ok(str(len(hits)) + " match(es)")
+    matches = detect(h)
+    if not matches:
+        print_err("no known signature matches")
+        print_info("len = " + str(len(h)) + " chars, charset = " + ("hex" if re.match(r'^[a-fA-F0-9]+$', h) else "mixed"))
+        return 1
+    print_info("hash identification")
+    print_kv("hash", h[:80] + ("..." if len(h) > 80 else ""))
+    print_kv("length", len(h))
     print()
-
-    # rank: prefer most-specific (with prefix)
-    hits_sorted = sorted(hits, key=lambda x: (not x.get("regex", "").startswith("^\\$"), x["name"]))
-    for i, entry in enumerate(hits_sorted, 1):
-        print(BOLD + SCARLET + str(i) + ". " + entry["name"] + RESET)
-        print("   " + ASH + "hashcat:  " + RESET + BONE + "-m " + entry["hc"] + RESET)
-        print("   " + ASH + "john:     " + RESET + BONE + "--format=" + entry["john"] + RESET)
-        if entry.get("notes"):
-            print("   " + ASH + "notes:    " + RESET + CLOT + entry["notes"] + RESET)
-        print()
-
-    out = Path(out_file) if out_file else HASH_DIR / ("id_" + str(int(time.time())) + ".json")
-    out.write_text(json.dumps({"hash": h, "matches": hits_sorted}, indent=2))
-    print_kv("saved", out)
+    for m in matches:
+        print("  " + SCARLET + m["label"].ljust(14) + RESET
+              + " hashcat -m " + m["hashcat_mode"].ljust(6)
+              + " john --format=" + m["john_format"])
     return 0
 
 
-def cmd_plan(hash_str: str, wordlist: str, out_file: str) -> int:
-    """Given a hash, produce the exact attack command chain."""
-    h = hash_str.strip()
-    if not h:
-        print_err("give a hash")
-        return 2
-
-    hits = identify(h)
-    if not hits:
-        print_err("cannot identify hash")
+def cmd_pure(h: str, algo: str, wordlist: str) -> int:
+    if algo not in PY_HASHERS and algo != "ntlm":
+        print_err("pure-python supports: " + ", ".join(list(PY_HASHERS.keys()) + ["ntlm"]))
         return 1
-    entry = sorted(hits, key=lambda x: (not x.get("regex", "").startswith("^\\$"), x["name"]))[0]
+    if not wordlist:
+        print_err("--wordlist required for pure mode")
+        return 1
+    wl = Path(wordlist)
+    if not wl.exists():
+        print_err("wordlist not found: " + wordlist)
+        return 1
 
-    wordlist = wordlist or "/usr/share/wordlists/rockyou.txt"
-    rules_dir = "/usr/share/hashcat/rules"
+    target = h.lower()
+    print_info("pure-python crack")
+    print_kv("algo", algo)
+    print_kv("wordlist", wl)
+    print()
 
-    print_info("attack plan for " + entry["name"])
-    print_kv("hashcat mode", entry["hc"])
-    print_kv("john format", entry["john"])
+    n = 0
+    t0 = time.time()
+    with wl.open("rb") as f:
+        for line in f:
+            pw = line.rstrip(b"\r\n")
+            if algo == "ntlm":
+                got = ntlm_hash(pw.decode("utf-8", errors="replace"))
+            else:
+                got = PY_HASHERS[algo](pw).hexdigest()
+            n += 1
+            if got == target:
+                print_ok("HIT")
+                print_kv("word", pw.decode("utf-8", errors="replace"))
+                print_kv("tried", n)
+                print_kv("elapsed", str(round(time.time() - t0, 2)) + "s")
+                return 0
+            if n % 100000 == 0:
+                print("  " + ASH + str(n) + " tried in " + str(round(time.time() - t0, 1)) + "s" + RESET)
+    print()
+    print_err("no match")
+    print_kv("tried", n)
+    print_kv("elapsed", str(round(time.time() - t0, 2)) + "s")
+    return 1
+
+
+def cmd_hashcat(h: str, mode: str, wordlist: str, rules: str) -> int:
+    hc = _which("hashcat")
+    if not hc:
+        print_err("hashcat not on PATH — apt install hashcat, or use --pure")
+        return 1
+    if not wordlist:
+        print_err("--wordlist required")
+        return 1
+    HASH_DIR.mkdir(parents=True, exist_ok=True)
+    hf = HASH_DIR / ("target_" + str(int(time.time())) + ".txt")
+    hf.write_text(h + "\n")
+
+    cmd = [hc, "-m", mode, str(hf), wordlist, "--quiet",
+           "--potfile-path", str(HASH_DIR / "hashcat.pot"),
+           "--outfile", str(HASH_DIR / "cracked.txt"),
+           "--outfile-format", "2"]
+    if rules:
+        cmd += ["-r", rules]
+
+    print_info("hashcat")
+    print_kv("mode", mode)
+    print_kv("wordlist", wordlist)
+    if rules:
+        print_kv("rules", rules)
+    print()
+    rc, out, err = _run(cmd)
+    if rc == 0:
+        cracked = HASH_DIR / "cracked.txt"
+        if cracked.exists() and cracked.stat().st_size > 0:
+            print_ok("cracked")
+            print(cracked.read_text())
+            return 0
+    print_err("hashcat rc=" + str(rc))
+    if err:
+        print_warn(err.strip().splitlines()[-1] if err.strip() else "")
+    return 1
+
+
+def cmd_john(h: str, format_: str, wordlist: str) -> int:
+    jn = _which("john", "johnny")
+    if not jn:
+        print_err("john not on PATH — apt install john, or use --pure")
+        return 1
+    HASH_DIR.mkdir(parents=True, exist_ok=True)
+    hf = HASH_DIR / ("target_john_" + str(int(time.time())) + ".txt")
+    hf.write_text(h + "\n")
+    cmd = [jn, "--format=" + format_, "--wordlist=" + wordlist, str(hf)]
+    print_info("john")
+    print_kv("format", format_)
     print_kv("wordlist", wordlist)
     print()
-
-    print(BOLD + "Stage 1: wordlist" + RESET)
-    print("  hashcat -m " + entry["hc"] + " -a 0 " + h[:60] + "... " + wordlist)
-    print()
-    print(BOLD + "Stage 2: wordlist + best64 rules" + RESET)
-    print("  hashcat -m " + entry["hc"] + " -a 0 -r " + rules_dir + "/best64.rule hash " + wordlist)
-    print()
-    print(BOLD + "Stage 3: wordlist + OneRuleToRuleThemAll" + RESET)
-    print("  hashcat -m " + entry["hc"] + " -a 0 -r " + rules_dir + "/OneRuleToRuleThemAll.rule hash " + wordlist)
-    print()
-
-    # mask suggestion per hash type
-    mask_map = {
-        "NTLM":       "?u?l?l?l?l?l?d?d",
-        "MD5":        "?u?l?l?l?l?l?d?d",
-        "SHA-256":    "?u?l?l?l?l?l?d?d",
-        "bcrypt":     "?u?l?l?l?l?l?d?d",
-        "sha512crypt": "?u?l?l?l?l?l?d?d",
-        "Kerberos TGS": "?u?l?l?l?l?l?d?d",
-    }
-    mask = mask_map.get(entry["name"], "?u?l?l?l?l?l?d?d")
-    print(BOLD + "Stage 4: mask (brute force last resort)" + RESET)
-    print("  hashcat -m " + entry["hc"] + " -a 3 hash '" + mask + "'")
-    print()
-
-    print(BOLD + "Stage 5: combinator with common suffixes" + RESET)
-    print("  hashcat -m " + entry["hc"] + " -a 1 hash " + wordlist + " digits.txt")
-    print()
-
-    plan = {
-        "hash": h,
-        "identified_as": entry["name"],
-        "hashcat_mode": entry["hc"],
-        "john_format": entry["john"],
-        "stages": [
-            {"name": "wordlist", "cmd": "hashcat -m " + entry["hc"] + " -a 0 HASH " + wordlist},
-            {"name": "best64",   "cmd": "hashcat -m " + entry["hc"] + " -a 0 -r " + rules_dir + "/best64.rule HASH " + wordlist},
-            {"name": "onerule",  "cmd": "hashcat -m " + entry["hc"] + " -a 0 -r " + rules_dir + "/OneRuleToRuleThemAll.rule HASH " + wordlist},
-            {"name": "mask",     "cmd": "hashcat -m " + entry["hc"] + " -a 3 HASH " + mask},
-        ],
-    }
-    out = Path(out_file) if out_file else HASH_DIR / ("plan_" + str(int(time.time())) + ".json")
-    out.write_text(json.dumps(plan, indent=2))
-    print_kv("saved", out)
-    return 0
-
-
-def cmd_shadow(shadow_path: str, out_file: str) -> int:
-    """Parse /etc/shadow-style file, identify each hash, emit an unshadowed file
-    and per-hash attack commands."""
-    p = Path(shadow_path).expanduser()
-    if not p.exists():
-        print_err("file not found: " + str(p))
-        return 1
-
-    print_info("shadow file analysis")
-    print()
-
-    findings = []
-    for line in p.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        parts = line.split(":")
-        if len(parts) < 2:
-            continue
-        user = parts[0]
-        h = parts[1]
-        if not h or h in ("*", "!", "!!", "x", "NP"):
-            print("  " + ASH + user.ljust(20) + " (no hash)" + RESET)
-            continue
-
-        hits = identify(h)
-        if not hits:
-            print("  " + ARTERY + user.ljust(20) + RESET + " (unrecognized: " + h[:20] + "...)")
-            findings.append({"user": user, "hash": h, "identified": "unknown"})
-            continue
-
-        entry = sorted(hits, key=lambda x: (not x.get("regex", "").startswith("^\\$"), x["name"]))[0]
-        print("  " + SCARLET + "▓ " + RESET + BONE + user.ljust(20) + RESET
-              + ARTERY + entry["name"] + RESET
-              + "  " + ASH + "(-m " + entry["hc"] + ")" + RESET)
-        findings.append({
-            "user": user,
-            "hash": h,
-            "identified": entry["name"],
-            "hashcat": entry["hc"],
-            "john": entry["john"],
-        })
-
-    out = Path(out_file) if out_file else HASH_DIR / ("shadow_" + str(int(time.time())) + ".json")
-    out.write_text(json.dumps(findings, indent=2))
-    print()
-    print_kv("users", len(findings))
-    print_kv("saved", out)
-    return 0
-
-
-def cmd_db(out_file: str) -> int:
-    print_info(str(len(HASH_DB)) + " hash types in database")
-    print()
-    for entry in HASH_DB:
-        print("  " + BONE + entry["name"].ljust(22) + RESET
-              + ASH + "-m " + entry["hc"].ljust(8) + RESET
-              + CLOT + entry.get("notes", "")[:60] + RESET)
-
-    out = Path(out_file) if out_file else HASH_DIR / ("db_" + str(int(time.time())) + ".json")
-    out.write_text(json.dumps(HASH_DB, indent=2))
-    print()
-    print_kv("saved", out)
-    return 0
+    rc, out, err = _run(cmd)
+    print(out)
+    if err:
+        print_warn(err.strip())
+    # ask john to show
+    rc2, out2, _ = _run([jn, "--show", "--format=" + format_, str(hf)])
+    if out2.strip():
+        print_ok("results:")
+        print(out2)
+        return 0
+    return 1
 
 
 def run_cli(args):
     import argparse
-    p = argparse.ArgumentParser(prog="redsky crypto hash", add_help=False)
-    p.add_argument("-h", "--help", action="store_true")
-    p.add_argument("action", nargs="?", default="help",
-                   choices=["id", "plan", "shadow", "db", "help"])
-    p.add_argument("hash", nargs="?", default="")
-    p.add_argument("--wordlist", default="")
-    p.add_argument("--in", dest="infile", default="")
-    p.add_argument("--out", default="")
+    sub = args[0] if args else "help"
+    rest = args[1:] if args else []
 
-    try:
-        ns = p.parse_args(args)
-    except SystemExit:
-        print_err("usage: redsky crypto hash <id|plan|shadow|db> [hash|file] [opts]")
-        return 2
-
-    if ns.action == "help" or ns.help:
-        print_info("id <hash>              -- identify hash type + hashcat/john mappings")
-        print_info("plan <hash>            -- attack plan with exact hashcat commands")
-        print_info("shadow --in file       -- parse /etc/shadow-style file")
-        print_info("db                     -- list the whole hash database")
+    if sub in ("-h", "--help", "help"):
+        print_info("redsky crypto hash <sub-command>")
+        print_info("")
+        print_info("  identify --hash H")
+        print_info("      guess hash type from shape, print hashcat -m / john --format")
+        print_info("  crack --hash H [--algo md5|sha1|sha256|...] --wordlist FILE [--pure]")
+        print_info("        [--mode HASH M] [--rules FILE] [--tool hashcat|john]")
+        print_info("      crack a hash — hashcat / john / pure-python fallback")
+        print_info("  ntlm --password 'text'")
+        print_info("      compute NTLM hash of a password")
         return 0
 
-    if ns.action == "id":
-        if not ns.hash:
-            print_err("give a hash")
+    if sub == "identify":
+        p = argparse.ArgumentParser(prog="redsky crypto hash identify", add_help=False)
+        p.add_argument("--hash", dest="h", default="")
+        try:
+            ns = p.parse_args(rest)
+        except SystemExit:
+            print_err("usage: redsky crypto hash identify --hash H")
             return 2
-        return cmd_id(ns.hash, ns.out)
-    if ns.action == "plan":
-        if not ns.hash:
-            print_err("give a hash")
+        return cmd_identify(ns.h)
+
+    if sub == "ntlm":
+        p = argparse.ArgumentParser(prog="redsky crypto hash ntlm", add_help=False)
+        p.add_argument("--password", required=False, default="")
+        try:
+            ns = p.parse_args(rest)
+        except SystemExit:
+            print_err("usage: redsky crypto hash ntlm --password 'text'")
             return 2
-        return cmd_plan(ns.hash, ns.wordlist, ns.out)
-    if ns.action == "shadow":
-        if not ns.infile:
-            print_err("--in file required")
+        if not ns.password:
+            print_err("--password required")
             return 2
-        return cmd_shadow(ns.infile, ns.out)
-    if ns.action == "db":
-        return cmd_db(ns.out)
+        print(ntlm_hash(ns.password))
+        return 0
+
+    if sub in ("crack", "crack-all"):
+        p = argparse.ArgumentParser(prog="redsky crypto hash crack", add_help=False)
+        p.add_argument("--hash", dest="h", required=False, default="")
+        p.add_argument("--algo", default="")
+        p.add_argument("--wordlist", default="")
+        p.add_argument("--pure", action="store_true")
+        p.add_argument("--mode", default="")
+        p.add_argument("--format", dest="format_", default="")
+        p.add_argument("--rules", default="")
+        p.add_argument("--tool", default="auto", choices=["auto", "hashcat", "john", "pure"])
+        try:
+            ns = p.parse_args(rest)
+        except SystemExit:
+            print_err("usage: redsky crypto hash crack --hash H --algo md5 --wordlist FILE [--pure]")
+            return 2
+        if not ns.h:
+            print_err("--hash required")
+            return 2
+
+        # auto-pick tool
+        if ns.tool == "auto":
+            if ns.pure:
+                ns.tool = "pure"
+            elif _which("hashcat"):
+                ns.tool = "hashcat"
+            elif _which("john"):
+                ns.tool = "john"
+            else:
+                ns.tool = "pure"
+
+        # auto-detect algo / mode from hash if not given
+        matches = detect(ns.h)
+        if not ns.algo and matches:
+            ns.algo = matches[0]["label"]
+        if not ns.mode and matches:
+            ns.mode = matches[0]["hashcat_mode"]
+        if not ns.format_ and matches:
+            ns.format_ = matches[0]["john_format"]
+
+        if ns.tool == "pure":
+            return cmd_pure(ns.h, ns.algo or "md5", ns.wordlist)
+        if ns.tool == "hashcat":
+            if not ns.mode:
+                print_err("could not auto-detect hashcat mode — pass --mode N")
+                return 2
+            return cmd_hashcat(ns.h, ns.mode, ns.wordlist, ns.rules)
+        if ns.tool == "john":
+            if not ns.format_:
+                print_err("could not auto-detect john format — pass --format F")
+                return 2
+            return cmd_john(ns.h, ns.format_, ns.wordlist)
+
+    print_err("unknown hash sub-command: " + sub)
     return 2
 
 

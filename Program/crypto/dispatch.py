@@ -7,17 +7,14 @@ from Program.utils import print_info, print_err
 def _usage():
     print_info("redsky crypto <sub-command> [args...]")
     print_info("")
-    print_info("  rng <mt-clone|java-crack|lcg|timestamp|demo> [opts]")
-    print_info("      PRNG state/seed recovery — MT19937, Java LCG, generic LCG")
+    print_info("  wallet       derive | brainwallet | hunt --kind seq|low_hamming|debian")
+    print_info("      BTC/ETH address derivation, brainwallet, weak-key enumeration")
     print_info("")
-    print_info("  keyextract <small-e|hastad|batch-gcd|fermat|wiener|roca|ecdsa-reuse|dsa-reuse> --in file.json")
-    print_info("      RSA / ECDSA / DSA private key recovery")
+    print_info("  rng          catalog | info <name> | predict java --observed 'a b'")
+    print_info("      weak-PRNG attack catalog + state recovery drivers")
     print_info("")
-    print_info("  wallet <entropy|derive|brainwallet|reuse> [opts]")
-    print_info("      BIP39/BIP32 derivation, brainwallets, ECDSA nonce reuse")
-    print_info("")
-    print_info("  hash <id|plan|shadow|db> [hash|file]")
-    print_info("      hash identification + hashcat/john attack planner")
+    print_info("  hash         identify | crack | ntlm")
+    print_info("      hash ID + hashcat/john/pure-python cracking")
 
 
 def run_cli(args: List[str]) -> int:
@@ -29,16 +26,13 @@ def run_cli(args: List[str]) -> int:
         _usage()
         return 0
 
-    if sub in ("rng", "rand", "r"):
-        from .rng import run_cli as _f
-        return int(_f(args[1:]))
-    if sub in ("keyextract", "key", "keys", "k"):
-        from .keyextract import run_cli as _f
-        return int(_f(args[1:]))
-    if sub in ("wallet", "wallets", "w"):
+    if sub in ("wallet", "w"):
         from .wallet import run_cli as _f
         return int(_f(args[1:]))
-    if sub in ("hash", "hashes", "h"):
+    if sub in ("rng", "r"):
+        from .rng import run_cli as _f
+        return int(_f(args[1:]))
+    if sub in ("hash", "h", "crack"):
         from .hash_crack import run_cli as _f
         return int(_f(args[1:]))
 
