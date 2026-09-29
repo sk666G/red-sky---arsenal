@@ -635,3 +635,9 @@ func (s *Session) SendProxyChainStart(sessionID string, req proto.ProxyChainStar
 	req.SessionID = sessionID
 	return s.sendTunnelMsg(proto.TypeProxyChainStart, req)
 }
+
+// SendCSIntStart drives content-source intelligence on the agent.
+func (s *Session) SendCSIntStart(sessionID string, req proto.CSIntStart) error {
+	req.SessionID = sessionID
+	return s.sendTunnelMsg(proto.TypeCSIntStart, req)
+}
