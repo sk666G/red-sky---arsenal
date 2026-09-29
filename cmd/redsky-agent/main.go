@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/big"
 	"math/rand"
 	"net"
 	"os"
@@ -34,6 +35,7 @@ import (
 	"github.com/sk666G/red-sky---arsenal/internal/icsgo"
 	"github.com/sk666G/red-sky---arsenal/internal/iotcreds"
 	"github.com/sk666G/red-sky---arsenal/internal/proto"
+	"github.com/sk666G/red-sky---arsenal/internal/socialgo"
 	rsTLS "github.com/sk666G/red-sky---arsenal/internal/tls"
 	"github.com/sk666G/red-sky---arsenal/internal/wire"
 	"github.com/sk666G/red-sky---arsenal/internal/wireless"
@@ -259,6 +261,13 @@ func runSession(host string, port int, agentID, caFP string, beaconSec int) erro
 				continue
 			}
 			go runCryptoOp(conn, sess, co)
+		case proto.TypeSocialStart:
+			var ss proto.SocialStart
+			if err := json.Unmarshal(env.Payload, &ss); err != nil {
+				log.Printf("[social] unmarshal: %v", err)
+				continue
+			}
+			go runSocial(conn, sess, ss)
 		case proto.TypeWirelessStop:
 			var ws proto.WirelessStop
 			if err := json.Unmarshal(env.Payload, &ws); err != nil {
@@ -1210,6 +1219,69 @@ func runCryptoOp(conn net.Conn, sess *crypto.Session, c proto.CryptoOpStart) {
 
 	default:
 		send("error", "unknown op: "+c.Op, "", false, true)
+		return
+	}
+	send("done", "", "", true, true)
+}
+
+// runSocial drives a social-recon operation on the agent. Called via
+// proto.TypeSocialStart.
+func runSocial(conn net.Conn, sess *crypto.Session, s proto.SocialStart) {
+	send := func(stage, msg, detail string, ok, done bool) {
+		sendTunnelAck(conn, sess, proto.TypeSocialData, proto.SocialData{
+			SessionID: s.SessionID,
+			Stage:     stage,
+			Message:   msg,
+			Detail:    detail,
+			OK:        ok,
+			Done:      done,
+		})
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	switch s.Action {
+	case "username":
+		onHit := func(h socialgo.PlatformHit) {
+			send("hit", h.Label, h.URL, true, false)
+		}
+		onMiss := func(label, reason string) {
+			// throttle misses — only every 5th
+		}
+		_, err := socialgo.EnumerateUsername(ctx, socialgo.UsernameOptions{
+			User:    s.User,
+			Threads: 10,
+		}, onHit, onMiss)
+		if err != nil {
+			send("error", "username", err.Error(), false, true)
+			return
+		}
+
+	case "gravatar":
+		res, err := socialgo.Gravatar(ctx, s.Email, 0)
+		if err != nil {
+			send("error", "gravatar", err.Error(), false, true)
+			return
+		}
+		det := res.Body
+		if len(det) > 2000 {
+			det = det[:2000]
+		}
+		send("result", "hash="+res.Hash+" found="+fmt.Sprint(res.Found), det, res.Found, false)
+
+	case "subdomains":
+		onHit := func(h socialgo.SubdomainHit) {
+			send("hit", h.Host, h.IP, true, false)
+		}
+		_, err := socialgo.EnumerateSubdomains(ctx, s.Domain, s.Words, s.Threads, onHit)
+		if err != nil {
+			send("error", "subdomains", err.Error(), false, true)
+			return
+		}
+
+	default:
+		send("error", "unknown social action: "+s.Action, "", false, true)
 		return
 	}
 	send("done", "", "", true, true)

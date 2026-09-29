@@ -54,6 +54,8 @@ const (
 	TypeCloudData     MessageType = "cloud_data"
 	TypeCryptoOpStart MessageType = "crypto_op_start"
 	TypeCryptoOpData  MessageType = "crypto_op_data"
+	TypeSocialStart   MessageType = "social_start"
+	TypeSocialData    MessageType = "social_data"
 	TypeWirelessStop  MessageType = "wireless_stop"
 	TypeWirelessData  MessageType = "wireless_data"
 	TypeWirelessDone  MessageType = "wireless_done"
@@ -413,6 +415,33 @@ type CryptoOpStart struct {
 type CryptoOpData struct {
 	SessionID string `json:"session_id"`
 	Stage     string `json:"stage"` // result|progress|error|done
+	Message   string `json:"message"`
+	Detail    string `json:"detail,omitempty"`
+	OK        bool   `json:"ok"`
+	Done      bool   `json:"done"`
+}
+
+// SocialStart drives a social-recon operation on the agent.
+type SocialStart struct {
+	SessionID string `json:"session_id"`
+	Action    string `json:"action"` // username|gravatar|subdomains
+
+	// username
+	User string `json:"user,omitempty"`
+
+	// gravatar
+	Email string `json:"email,omitempty"`
+
+	// subdomains
+	Domain  string   `json:"domain,omitempty"`
+	Words   []string `json:"words,omitempty"`
+	Threads int      `json:"threads,omitempty"`
+}
+
+// SocialData streams progress / results back to core.
+type SocialData struct {
+	SessionID string `json:"session_id"`
+	Stage     string `json:"stage"` // hit|miss|result|done|error
 	Message   string `json:"message"`
 	Detail    string `json:"detail,omitempty"`
 	OK        bool   `json:"ok"`

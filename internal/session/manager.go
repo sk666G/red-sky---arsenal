@@ -557,3 +557,9 @@ func (s *Session) SendCryptoOpStart(sessionID string, req proto.CryptoOpStart) e
 	req.SessionID = sessionID
 	return s.sendTunnelMsg(proto.TypeCryptoOpStart, req)
 }
+
+// SendSocialStart kicks off a social-recon operation on the agent.
+func (s *Session) SendSocialStart(sessionID string, req proto.SocialStart) error {
+	req.SessionID = sessionID
+	return s.sendTunnelMsg(proto.TypeSocialStart, req)
+}

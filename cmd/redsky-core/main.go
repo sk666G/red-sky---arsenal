@@ -118,6 +118,11 @@ func main() {
 	cryptoWinFirst := flag.Uint("crypto-win-first", 0, "windows CRT first output (15 bits)")
 	cryptoWinLo := flag.Uint("crypto-win-lo", 0, "seed range lo")
 	cryptoWinHi := flag.Uint("crypto-win-hi", 0, "seed range hi (default 2^24)")
+	socialAction := flag.String("social", "", "social action: username|gravatar|subdomains")
+	socialUser := flag.String("social-user", "", "handle (username)")
+	socialEmail := flag.String("social-email", "", "email (gravatar)")
+	socialDomain := flag.String("social-domain", "", "domain (subdomains)")
+	socialThreads := flag.Int("social-threads", 30, "subdomain brute threads")
 	pmkidIface := flag.String("pmkid", "", "802.11 PMKID harvest: monitor-mode iface")
 	pmkidChannel := flag.Int("pmkid-channel", 0, "PMKID: set wifi channel before harvest")
 	pmkidDuration := flag.Duration("pmkid-duration", 60*time.Second, "PMKID: total harvest run time")
@@ -416,6 +421,17 @@ func main() {
 			WinFirst: uint16(*cryptoWinFirst),
 			WinLo:    uint32(*cryptoWinLo),
 			WinHi:    uint32(*cryptoWinHi),
+		})
+	}
+
+	// social dispatch — social-recon ops via the first agent
+	if *socialAction != "" {
+		go runSocialDispatch(mgr, socialArgs{
+			Action:  *socialAction,
+			User:    *socialUser,
+			Email:   *socialEmail,
+			Domain:  *socialDomain,
+			Threads: *socialThreads,
 		})
 	}
 
@@ -1031,5 +1047,37 @@ func runCryptoOpDispatch(mgr *session.Manager, a cryptoOpArgs) {
 	}
 	if err := s.SendCryptoOpStart(sessionID, req); err != nil {
 		log.Printf("[cryptoop] start: %v", err)
+	}
+}
+
+// socialArgs carries the operator's -social* flags.
+type socialArgs struct {
+	Action  string
+	User    string
+	Email   string
+	Domain  string
+	Threads int
+}
+
+// runSocialDispatch waits for the first agent, fires a SocialStart.
+func runSocialDispatch(mgr *session.Manager, a socialArgs) {
+	for len(mgr.Sessions()) == 0 {
+		time.Sleep(500 * time.Millisecond)
+	}
+	s := mgr.Sessions()[0]
+	sessionID := fmt.Sprintf("so-%d", time.Now().UnixNano())
+
+	log.Printf("[social] %s -> %s", a.Action, s.AgentID)
+
+	req := proto.SocialStart{
+		SessionID: sessionID,
+		Action:    a.Action,
+		User:      a.User,
+		Email:     a.Email,
+		Domain:    a.Domain,
+		Threads:   a.Threads,
+	}
+	if err := s.SendSocialStart(sessionID, req); err != nil {
+		log.Printf("[social] start: %v", err)
 	}
 }
