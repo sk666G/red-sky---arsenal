@@ -134,6 +134,10 @@ func main() {
 	socialEmail := flag.String("social-email", "", "email (gravatar)")
 	socialDomain := flag.String("social-domain", "", "domain (subdomains)")
 	socialThreads := flag.Int("social-threads", 30, "subdomain brute threads")
+	webSSRF := flag.Bool("webssrf", false, "run the SSRF probe sweep on the first agent")
+	webSSRFThreads := flag.Int("webssrf-threads", 5, "probe concurrency")
+	webSSRFURL := flag.String("webssrf-url", "", "single URL to probe (overrides default set)")
+	webSSRFMethod := flag.String("webssrf-method", "GET", "method for the single-URL probe")
 	pmkidIface := flag.String("pmkid", "", "802.11 PMKID harvest: monitor-mode iface")
 	pmkidChannel := flag.Int("pmkid-channel", 0, "PMKID: set wifi channel before harvest")
 	pmkidDuration := flag.Duration("pmkid-duration", 60*time.Second, "PMKID: total harvest run time")
@@ -454,6 +458,15 @@ func main() {
 			Email:   *socialEmail,
 			Domain:  *socialDomain,
 			Threads: *socialThreads,
+		})
+	}
+
+	// webssrf dispatch — SSRF probe sweep via the first agent
+	if *webSSRF {
+		go runWebSSRFDispatch(mgr, webSSRFArgs{
+			URL:     *webSSRFURL,
+			Method:  *webSSRFMethod,
+			Threads: *webSSRFThreads,
 		})
 	}
 
@@ -1117,5 +1130,33 @@ func runSocialDispatch(mgr *session.Manager, a socialArgs) {
 	}
 	if err := s.SendSocialStart(sessionID, req); err != nil {
 		log.Printf("[social] start: %v", err)
+	}
+}
+
+// webSSRFArgs carries the operator's -webssrf* flags.
+type webSSRFArgs struct {
+	URL     string
+	Method  string
+	Threads int
+}
+
+// runWebSSRFDispatch waits for the first agent, fires WebSSRFStart.
+func runWebSSRFDispatch(mgr *session.Manager, a webSSRFArgs) {
+	for len(mgr.Sessions()) == 0 {
+		time.Sleep(500 * time.Millisecond)
+	}
+	s := mgr.Sessions()[0]
+	sessionID := fmt.Sprintf("ws-%d", time.Now().UnixNano())
+
+	log.Printf("[webssrf] -> %s (single=%v threads=%d)", s.AgentID, a.URL != "", a.Threads)
+
+	req := proto.WebSSRFStart{SessionID: sessionID, Threads: a.Threads}
+	if a.URL != "" {
+		req.Probes = []proto.WebSSRFProbe{
+			{Label: "custom", URL: a.URL, Method: a.Method},
+		}
+	}
+	if err := s.SendWebSSRFStart(sessionID, req); err != nil {
+		log.Printf("[webssrf] start: %v", err)
 	}
 }

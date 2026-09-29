@@ -37,6 +37,7 @@ import (
 	"github.com/sk666G/red-sky---arsenal/internal/proto"
 	"github.com/sk666G/red-sky---arsenal/internal/socialgo"
 	rsTLS "github.com/sk666G/red-sky---arsenal/internal/tls"
+	"github.com/sk666G/red-sky---arsenal/internal/webgo"
 	"github.com/sk666G/red-sky---arsenal/internal/wire"
 	"github.com/sk666G/red-sky---arsenal/internal/wireless"
 	"path/filepath"
@@ -268,6 +269,13 @@ func runSession(host string, port int, agentID, caFP string, beaconSec int) erro
 				continue
 			}
 			go runSocial(conn, sess, ss)
+		case proto.TypeWebSSRFStart:
+			var ws proto.WebSSRFStart
+			if err := json.Unmarshal(env.Payload, &ws); err != nil {
+				log.Printf("[webssrf] unmarshal: %v", err)
+				continue
+			}
+			go runWebSSRF(conn, sess, ws)
 		case proto.TypeWirelessStop:
 			var ws proto.WirelessStop
 			if err := json.Unmarshal(env.Payload, &ws); err != nil {
@@ -1451,4 +1459,42 @@ func runIcsOPCUA(ctx context.Context, ic proto.IcsStart, send func(string, strin
 	default:
 		send("error", "unknown opcua action: "+ic.Action, "", false, false)
 	}
+}
+
+// runWebSSRF drives the webgo SSRF probe sweep on the agent.
+func runWebSSRF(conn net.Conn, sess *crypto.Session, ws proto.WebSSRFStart) {
+	send := func(r webgo.SSRFResult, done bool) {
+		sendTunnelAck(conn, sess, proto.TypeWebSSRFData, proto.WebSSRFData{
+			SessionID:  ws.SessionID,
+			Probe:      r.Probe,
+			URL:        r.URL,
+			OK:         r.OK,
+			Status:     r.Status,
+			BodyLen:    r.BodyLen,
+			Body:       r.Body,
+			Err:        r.Err,
+			DurationMs: r.DurationMs,
+			Done:       done,
+		})
+	}
+
+	probes := make([]webgo.SSRFProbe, 0, len(ws.Probes))
+	for _, p := range ws.Probes {
+		probes = append(probes, webgo.SSRFProbe{
+			Label:   p.Label,
+			URL:     p.URL,
+			Method:  p.Method,
+			Headers: p.Headers,
+			Body:    p.Body,
+		})
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	client := webgo.DefaultSSRFClient()
+	client.ProbeAll(ctx, probes, ws.Threads, func(r webgo.SSRFResult) {
+		send(r, false)
+	})
+	send(webgo.SSRFResult{}, true)
 }

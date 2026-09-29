@@ -56,6 +56,8 @@ const (
 	TypeCryptoOpData  MessageType = "crypto_op_data"
 	TypeSocialStart   MessageType = "social_start"
 	TypeSocialData    MessageType = "social_data"
+	TypeWebSSRFStart  MessageType = "webssrf_start"
+	TypeWebSSRFData   MessageType = "webssrf_data"
 	TypeWirelessStop  MessageType = "wireless_stop"
 	TypeWirelessData  MessageType = "wireless_data"
 	TypeWirelessDone  MessageType = "wireless_done"
@@ -462,4 +464,35 @@ type SocialData struct {
 	Detail    string `json:"detail,omitempty"`
 	OK        bool   `json:"ok"`
 	Done      bool   `json:"done"`
+}
+
+// WebSSRFStart drives an SSRF probe run on the agent.
+type WebSSRFStart struct {
+	SessionID string `json:"session_id"`
+	// If Probes is empty, DefaultProbes are used.
+	Probes  []WebSSRFProbe `json:"probes,omitempty"`
+	Threads int            `json:"threads,omitempty"`
+}
+
+// WebSSRFProbe is one probe — a URL and its optional method/headers/body.
+type WebSSRFProbe struct {
+	Label   string            `json:"label"`
+	URL     string            `json:"url"`
+	Method  string            `json:"method,omitempty"`
+	Headers map[string]string `json:"headers,omitempty"`
+	Body    string            `json:"body,omitempty"`
+}
+
+// WebSSRFData streams results back to core.
+type WebSSRFData struct {
+	SessionID  string `json:"session_id"`
+	Probe      string `json:"probe"`
+	URL        string `json:"url"`
+	OK         bool   `json:"ok"`
+	Status     int    `json:"status"`
+	BodyLen    int    `json:"body_len"`
+	Body       string `json:"body,omitempty"`
+	Err        string `json:"error,omitempty"`
+	DurationMs int64  `json:"duration_ms"`
+	Done       bool   `json:"done"`
 }

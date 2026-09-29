@@ -563,3 +563,9 @@ func (s *Session) SendSocialStart(sessionID string, req proto.SocialStart) error
 	req.SessionID = sessionID
 	return s.sendTunnelMsg(proto.TypeSocialStart, req)
 }
+
+// SendWebSSRFStart kicks off an SSRF probe run on the agent.
+func (s *Session) SendWebSSRFStart(sessionID string, req proto.WebSSRFStart) error {
+	req.SessionID = sessionID
+	return s.sendTunnelMsg(proto.TypeWebSSRFStart, req)
+}
