@@ -599,3 +599,9 @@ func (s *Session) SendShellcodeStart(sessionID string, req proto.ShellcodeStart)
 	req.SessionID = sessionID
 	return s.sendTunnelMsg(proto.TypeShellcodeStart, req)
 }
+
+// SendHostInfoStart asks the agent for its local host-info picture.
+func (s *Session) SendHostInfoStart(sessionID string, req proto.HostInfoStart) error {
+	req.SessionID = sessionID
+	return s.sendTunnelMsg(proto.TypeHostInfoStart, req)
+}

@@ -68,6 +68,8 @@ const (
 	TypeAdEnumData     MessageType = "adenum_data"
 	TypeShellcodeStart MessageType = "shellcode_start"
 	TypeShellcodeData  MessageType = "shellcode_data"
+	TypeHostInfoStart  MessageType = "hostinfo_start"
+	TypeHostInfoData   MessageType = "hostinfo_data"
 	TypeWirelessStop   MessageType = "wireless_stop"
 	TypeWirelessData   MessageType = "wireless_data"
 	TypeWirelessDone   MessageType = "wireless_done"
@@ -627,5 +629,18 @@ type ShellcodeData struct {
 	Size      int    `json:"size"`
 	Notes     string `json:"notes,omitempty"`
 	CArray    string `json:"c_array,omitempty"`
+	Done      bool   `json:"done"`
+}
+
+// HostInfoStart asks the agent for its local interface / route picture.
+type HostInfoStart struct {
+	SessionID string `json:"session_id"`
+}
+
+// HostInfoData is the reply.
+type HostInfoData struct {
+	SessionID string `json:"session_id"`
+	JSON      string `json:"json,omitempty"`
+	Error     string `json:"error,omitempty"`
 	Done      bool   `json:"done"`
 }

