@@ -782,4 +782,7 @@ type BluetoothData struct {
 	Trusted   bool   `json:"trusted,omitempty"`
 	Error     string `json:"error,omitempty"`
 	Done      bool   `json:"done"`
+	// GATT enumeration
+	Services []string `json:"services,omitempty"` // formatted "handle|uuid|name"
+	Chars    []string `json:"chars,omitempty"`    // formatted "service_uuid|handle|uuid|flags"
 }

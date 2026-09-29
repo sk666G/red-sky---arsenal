@@ -2336,6 +2336,38 @@ func runBluetooth(conn net.Conn, sess *crypto.Session, b proto.BluetoothStart) {
 			Paired:  d.Paired,
 			Trusted: d.Trusted,
 		})
+	case "gatt":
+		if b.Address == "" {
+			send(proto.BluetoothData{Error: "address required", Done: true})
+			return
+		}
+		res, err := rfgo.GATTEnum(ctx, b.Address, opts)
+		if err != nil {
+			send(proto.BluetoothData{Error: err.Error(), Done: true})
+			return
+		}
+		var svcLines []string
+		var charLines []string
+		for _, s := range res.Services {
+			name := rfgo.DescribeUUID(s.UUID)
+			svcLines = append(svcLines, s.Handle+"|"+s.UUID+"|"+name)
+			for _, c := range s.Characteristics {
+				cname := rfgo.DescribeUUID(c.UUID)
+				cflags := ""
+				for i, f := range c.Flags {
+					if i > 0 {
+						cflags += ","
+					}
+					cflags += f
+				}
+				charLines = append(charLines, s.UUID+"|"+c.Handle+"|"+c.UUID+"|"+cname+"|"+cflags)
+			}
+		}
+		send(proto.BluetoothData{
+			Address:  b.Address,
+			Services: svcLines,
+			Chars:    charLines,
+		})
 	default:
 		send(proto.BluetoothData{Error: "unknown action: " + b.Action, Done: true})
 		return
