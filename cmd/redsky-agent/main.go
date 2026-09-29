@@ -2458,7 +2458,8 @@ func runDrone(conn net.Conn, sess *crypto.Session, d proto.DroneStart) {
 		}
 		var lines []string
 		for _, f := range frames {
-			lines = append(lines, f.From+"|"+itoaU8(f.MsgID)+"|"+hexBytes(f.Payload))
+			desc := drone.DescribeFrame(uint32(f.MsgID), f.Payload)
+			lines = append(lines, f.From+"|"+itoaU8(f.MsgID)+"|"+desc)
 		}
 		send(proto.DroneData{Frames: lines})
 
