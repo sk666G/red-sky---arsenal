@@ -593,3 +593,9 @@ func (s *Session) SendAdEnumStart(sessionID string, req proto.AdEnumStart) error
 	req.SessionID = sessionID
 	return s.sendTunnelMsg(proto.TypeAdEnumStart, req)
 }
+
+// SendShellcodeStart asks the agent to generate a shellcode stub.
+func (s *Session) SendShellcodeStart(sessionID string, req proto.ShellcodeStart) error {
+	req.SessionID = sessionID
+	return s.sendTunnelMsg(proto.TypeShellcodeStart, req)
+}

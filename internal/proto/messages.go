@@ -42,34 +42,36 @@ const (
 	TypeDNSExfilDone  MessageType = "dns_exfil_done"
 
 	// Wireless capture (agent -> core)
-	TypeWirelessStart MessageType = "wireless_start"
-	TypeCryptoStart   MessageType = "crypto_start"
-	TypeCryptoData    MessageType = "crypto_data"
-	TypeKeyPush       MessageType = "key_push"
-	TypeIoTCredsStart MessageType = "iotcreds_start"
-	TypeIoTCredsData  MessageType = "iotcreds_data"
-	TypeIcsStart      MessageType = "ics_start"
-	TypeIcsData       MessageType = "ics_data"
-	TypeCloudStart    MessageType = "cloud_start"
-	TypeCloudData     MessageType = "cloud_data"
-	TypeCryptoOpStart MessageType = "crypto_op_start"
-	TypeCryptoOpData  MessageType = "crypto_op_data"
-	TypeSocialStart   MessageType = "social_start"
-	TypeSocialData    MessageType = "social_data"
-	TypeWebSSRFStart  MessageType = "webssrf_start"
-	TypeWebSSRFData   MessageType = "webssrf_data"
-	TypeWebSSTIStart  MessageType = "webssti_start"
-	TypeWebSSTIData   MessageType = "webssti_data"
-	TypeWebXXEStart   MessageType = "webxxe_start"
-	TypeWebXXEData    MessageType = "webxxe_data"
-	TypeWebXSSStart   MessageType = "webxss_start"
-	TypeWebXSSData    MessageType = "webxss_data"
-	TypeAdEnumStart   MessageType = "adenum_start"
-	TypeAdEnumData    MessageType = "adenum_data"
-	TypeWirelessStop  MessageType = "wireless_stop"
-	TypeWirelessData  MessageType = "wireless_data"
-	TypeWirelessDone  MessageType = "wireless_done"
-	TypeWirelessFail  MessageType = "wireless_fail"
+	TypeWirelessStart  MessageType = "wireless_start"
+	TypeCryptoStart    MessageType = "crypto_start"
+	TypeCryptoData     MessageType = "crypto_data"
+	TypeKeyPush        MessageType = "key_push"
+	TypeIoTCredsStart  MessageType = "iotcreds_start"
+	TypeIoTCredsData   MessageType = "iotcreds_data"
+	TypeIcsStart       MessageType = "ics_start"
+	TypeIcsData        MessageType = "ics_data"
+	TypeCloudStart     MessageType = "cloud_start"
+	TypeCloudData      MessageType = "cloud_data"
+	TypeCryptoOpStart  MessageType = "crypto_op_start"
+	TypeCryptoOpData   MessageType = "crypto_op_data"
+	TypeSocialStart    MessageType = "social_start"
+	TypeSocialData     MessageType = "social_data"
+	TypeWebSSRFStart   MessageType = "webssrf_start"
+	TypeWebSSRFData    MessageType = "webssrf_data"
+	TypeWebSSTIStart   MessageType = "webssti_start"
+	TypeWebSSTIData    MessageType = "webssti_data"
+	TypeWebXXEStart    MessageType = "webxxe_start"
+	TypeWebXXEData     MessageType = "webxxe_data"
+	TypeWebXSSStart    MessageType = "webxss_start"
+	TypeWebXSSData     MessageType = "webxss_data"
+	TypeAdEnumStart    MessageType = "adenum_start"
+	TypeAdEnumData     MessageType = "adenum_data"
+	TypeShellcodeStart MessageType = "shellcode_start"
+	TypeShellcodeData  MessageType = "shellcode_data"
+	TypeWirelessStop   MessageType = "wireless_stop"
+	TypeWirelessData   MessageType = "wireless_data"
+	TypeWirelessDone   MessageType = "wireless_done"
+	TypeWirelessFail   MessageType = "wireless_fail"
 )
 
 // Envelope wraps every message. Payload is the raw JSON of the concrete type
@@ -600,4 +602,30 @@ type AdEnumData struct {
 	Message   string              `json:"message,omitempty"`
 	OK        bool                `json:"ok"`
 	Done      bool                `json:"done"`
+}
+
+// ShellcodeStart asks the agent to generate a shellcode stub and optionally
+// encode it.
+type ShellcodeStart struct {
+	SessionID string  `json:"session_id"`
+	Arch      string  `json:"arch"`               // linux_x64|linux_x86|windows_x64|macos_x64
+	Kind      string  `json:"kind"`               // exec_sh|reverse_sh|exec_cmd
+	Encode    string  `json:"encode,omitempty"`   // xor|rot13|null_free|chunked_xor|base64|uuid|ipv4|none
+	Key       uint8   `json:"key,omitempty"`      // for xor / rot
+	IP        [4]byte `json:"ip,omitempty"`       // for reverse_sh
+	Port      uint16  `json:"port,omitempty"`     // for reverse_sh
+	WinExec   uint64  `json:"win_exec,omitempty"` // for windows_x64
+}
+
+// ShellcodeData streams the result back to core.
+type ShellcodeData struct {
+	SessionID string `json:"session_id"`
+	Label     string `json:"label"`
+	Raw       string `json:"raw"`               // hex of raw
+	Encoded   string `json:"encoded,omitempty"` // hex or text of encoded
+	EncodeKey string `json:"encode_key,omitempty"`
+	Size      int    `json:"size"`
+	Notes     string `json:"notes,omitempty"`
+	CArray    string `json:"c_array,omitempty"`
+	Done      bool   `json:"done"`
 }
