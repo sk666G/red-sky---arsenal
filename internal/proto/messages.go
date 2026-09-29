@@ -577,6 +577,18 @@ type AdEnumStart struct {
 	BindDN string `json:"bind_dn,omitempty"`
 	BindPW string `json:"bind_pw,omitempty"`
 	BaseDN string `json:"base_dn,omitempty"` // auto-discover via RootDSE if empty
+	// write actions
+	WriteDriver string `json:"write_driver,omitempty"` // add_user|add_to_group|remove_from_group|set_attr|del_attr|add_spn|remove_spn|set_uac|add_uac|set_dontpreauth|clear_dontpreauth|set_primary_group|modify_pw|set_rbcd
+	TargetDN    string `json:"target_dn,omitempty"`
+	GroupDN     string `json:"group_dn,omitempty"`
+	AttrName    string `json:"attr_name,omitempty"`
+	AttrValue   string `json:"attr_value,omitempty"`
+	Password    string `json:"password,omitempty"`
+	UACValue    uint32 `json:"uac_value,omitempty"`
+	UACCurrent  uint32 `json:"uac_current,omitempty"`
+	SPN         string `json:"spn,omitempty"`
+	PrimaryGID  uint32 `json:"primary_gid,omitempty"`
+	EncodedSD   string `json:"encoded_sd,omitempty"`
 }
 
 // AdEnumData streams one LDAP entry per message, plus done / error markers.

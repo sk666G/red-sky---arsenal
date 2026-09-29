@@ -1798,9 +1798,56 @@ func runAdEnum(conn net.Conn, sess *crypto.Session, ae proto.AdEnumStart) {
 		for _, e := range tpls {
 			sendEntry(e)
 		}
+	case "write":
+		runAdWrite(c, ae, sendMsg)
 	default:
 		sendMsg("unknown ad action: "+ae.Action, false, true)
 		return
 	}
 	sendMsg("", true, true)
+}
+
+// runAdWrite handles the LDAP write actions. Every driver here requires a
+// privileged bind — plaintext LDAP rejects unicodePwd writes; use LDAPS.
+func runAdWrite(c *adgo.LDAPConn, ae proto.AdEnumStart, sendMsg func(string, bool, bool)) {
+	var err error
+	switch ae.WriteDriver {
+	case "add_user":
+		err = c.AddUser(ae.TargetDN, ae.AttrName, ae.Password, "")
+		// attr_name reused as samAccountName
+	case "add_to_group":
+		err = c.AddUserToGroup(ae.GroupDN, ae.TargetDN)
+	case "remove_from_group":
+		err = c.RemoveUserFromGroup(ae.GroupDN, ae.TargetDN)
+	case "set_attr":
+		err = c.SetAttribute(ae.TargetDN, ae.AttrName, ae.AttrValue)
+	case "del_attr":
+		err = c.DeleteAttribute(ae.TargetDN, ae.AttrName)
+	case "add_spn":
+		err = c.AddSPN(ae.TargetDN, ae.SPN)
+	case "remove_spn":
+		err = c.RemoveSPN(ae.TargetDN, ae.SPN)
+	case "set_uac":
+		err = c.SetUserAccountControl(ae.TargetDN, ae.UACValue)
+	case "add_uac":
+		err = c.AddUACFlag(ae.TargetDN, ae.UACCurrent, ae.UACValue)
+	case "set_dontpreauth":
+		err = c.SetDontReqPreauth(ae.TargetDN, ae.UACCurrent)
+	case "clear_dontpreauth":
+		err = c.ClearDontReqPreauth(ae.TargetDN, ae.UACCurrent)
+	case "set_primary_group":
+		err = c.SetPrimaryGroupID(ae.TargetDN, ae.PrimaryGID)
+	case "modify_pw":
+		err = c.ModifyPassword(ae.TargetDN, ae.Password)
+	case "set_rbcd":
+		err = c.SetAllowedToActOnBehalf(ae.TargetDN, ae.EncodedSD)
+	default:
+		sendMsg("unknown write driver: "+ae.WriteDriver, false, true)
+		return
+	}
+	if err != nil {
+		sendMsg("write error: "+err.Error(), false, true)
+		return
+	}
+	sendMsg("ok: "+ae.WriteDriver, true, false)
 }
