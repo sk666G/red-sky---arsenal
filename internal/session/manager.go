@@ -529,3 +529,17 @@ func (s *Session) SendCryptoStart(sessionID, root string, keyID uint32,
 	})
 }
 
+// SendIoTCredsStart kicks off an IoT default-credential spray on the agent.
+func (s *Session) SendIoTCredsStart(sessionID, host string, port int, protocol, path string,
+	timeout int, stopFirst bool) error {
+	return s.sendTunnelMsg(proto.TypeIoTCredsStart, proto.IoTCredsStart{
+		SessionID: sessionID,
+		Host:      host,
+		Port:      port,
+		Protocol:  protocol,
+		Path:      path,
+		Timeout:   timeout,
+		StopFirst: stopFirst,
+	})
+}
+

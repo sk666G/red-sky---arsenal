@@ -46,6 +46,8 @@ const (
 	TypeCryptoStart   MessageType = "crypto_start"
 	TypeCryptoData    MessageType = "crypto_data"
 	TypeKeyPush       MessageType = "key_push"
+	TypeIoTCredsStart MessageType = "iotcreds_start"
+	TypeIoTCredsData  MessageType = "iotcreds_data"
 	TypeWirelessStop  MessageType = "wireless_stop"
 	TypeWirelessData  MessageType = "wireless_data"
 	TypeWirelessDone  MessageType = "wireless_done"
@@ -270,5 +272,29 @@ type KeyPush struct {
 	Filename  string `json:"filename"`
 	Data      []byte `json:"data"`     // base64 over JSON
 	Mode      uint32 `json:"mode"`     // unix mode bits (0 = default 0600)
+}
+
+// IoTCredsStart kicks off a default-credential spray on the agent.
+type IoTCredsStart struct {
+	SessionID string `json:"session_id"`
+	Host      string `json:"host"`
+	Port      int    `json:"port"`
+	Protocol  string `json:"protocol"`  // http|https|telnet|ssh
+	Path      string `json:"path"`      // http only
+	Timeout   int    `json:"timeout"`   // seconds
+	StopFirst bool   `json:"stop_first"`
+}
+
+// IoTCredsData streams spray progress back to core.
+type IoTCredsData struct {
+	SessionID string `json:"session_id"`
+	Index     int    `json:"index"`
+	Total     int    `json:"total"`
+	Vendor    string `json:"vendor"`
+	User      string `json:"user"`
+	Pass      string `json:"pass"`
+	OK        bool   `json:"ok"`
+	Done      bool   `json:"done"`
+	Error     string `json:"error,omitempty"`
 }
 
