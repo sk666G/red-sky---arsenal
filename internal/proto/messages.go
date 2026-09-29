@@ -29,6 +29,13 @@ const (
 	// Tunnel control (bidirectional)
 	TypeTunnelReady MessageType = "tunnel_ready"
 	TypeTunnelFail  MessageType = "tunnel_fail"
+
+	// Packet capture (agent -> core)
+	TypeCaptureStart MessageType = "capture_start"
+	TypeCaptureStop  MessageType = "capture_stop"
+	TypeCaptureData  MessageType = "capture_data"
+	TypeCaptureDone  MessageType = "capture_done"
+	TypeCaptureFail  MessageType = "capture_fail"
 )
 
 // Envelope wraps every message. Payload is the raw JSON of the concrete type
@@ -123,4 +130,38 @@ type TunnelReady struct {
 type TunnelFail struct {
 	TunnelID string `json:"tunnel_id"`
 	Error    string `json:"error"`
+}
+
+
+// CaptureStart asks the agent to begin a packet capture on iface.
+type CaptureStart struct {
+	SessionID string `json:"session_id"`
+	Iface     string `json:"iface"`
+	Filter    string `json:"filter,omitempty"` // optional BPF, agent-side only supports "any" for now
+	Snaplen   int    `json:"snaplen,omitempty"` // 0 = full frames
+}
+
+// CaptureStop asks the agent to stop the capture with the given session.
+type CaptureStop struct {
+	SessionID string `json:"session_id"`
+}
+
+// CaptureData is one chunk of captured frames.
+type CaptureData struct {
+	SessionID string `json:"session_id"`
+	Data      []byte `json:"data"` // chunk of pcap-format bytes
+	Count     int    `json:"count"` // number of frames in this chunk
+}
+
+// CaptureDone signals the capture ended cleanly.
+type CaptureDone struct {
+	SessionID string `json:"session_id"`
+	Total     int    `json:"total"`
+	Bytes     int64  `json:"bytes"`
+}
+
+// CaptureFail reports an error starting the capture.
+type CaptureFail struct {
+	SessionID string `json:"session_id"`
+	Error     string `json:"error"`
 }

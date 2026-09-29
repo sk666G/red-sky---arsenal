@@ -51,10 +51,11 @@ type Session struct {
 	crypto  *crypto.Session
 	writeMu sync.Mutex
 	write  chan *Task
-	tasks   map[string]*Task // keyed by task ID
-	tunnels map[string]chan []byte
-	mu      sync.Mutex
-	closed  bool
+	tasks    map[string]*Task // keyed by task ID
+	tunnels  map[string]chan []byte
+	captures map[string]chan []byte
+	mu       sync.Mutex
+	closed   bool
 }
 
 // Send enqueues a task for the agent.
@@ -160,6 +161,7 @@ func (m *Manager) Register(agentID string, info proto.AgentInfo, conn net.Conn, 
 		write:    make(chan *Task, 64),
 		tasks:    make(map[string]*Task),
 		tunnels:  make(map[string]chan []byte),
+		captures: make(map[string]chan []byte),
 	}
 	m.mu.Lock()
 	// If an old session with the same agent ID exists, close it.
@@ -280,6 +282,23 @@ func (m *Manager) readerLoop(s *Session) {
 			if err := json.Unmarshal(env.Payload, &t); err == nil {
 				s.RouteTunnelInbound(t.TunnelID, t.Data, t.EOF)
 			}
+		case proto.TypeCaptureData:
+			var c proto.CaptureData
+			if err := json.Unmarshal(env.Payload, &c); err == nil {
+				s.RouteCaptureData(c.SessionID, c.Data)
+			}
+		case proto.TypeCaptureDone:
+			var c proto.CaptureDone
+			if err := json.Unmarshal(env.Payload, &c); err == nil {
+				m.emit("capture", s.AgentID, "done "+c.SessionID)
+				s.UnregisterCaptureChannel(c.SessionID)
+			}
+		case proto.TypeCaptureFail:
+			var c proto.CaptureFail
+			if err := json.Unmarshal(env.Payload, &c); err == nil {
+				m.emit("error", s.AgentID, "capture "+c.SessionID+" failed: "+c.Error)
+				s.UnregisterCaptureChannel(c.SessionID)
+			}
 		case proto.TypeTunnelReady:
 			var t proto.TunnelReady
 			if err := json.Unmarshal(env.Payload, &t); err == nil {
@@ -389,4 +408,63 @@ func (s *Session) UnregisterTunnel(tunnelID string) {
 		delete(s.tunnels, tunnelID)
 	}
 	s.mu.Unlock()
+}
+
+
+// --- capture ---
+
+// RegisterCaptureChannel creates a receive slot for a capture session.
+func (s *Session) RegisterCaptureChannel(sessionID string) chan []byte {
+	ch := make(chan []byte, 512)
+	s.mu.Lock()
+	s.captures[sessionID] = ch
+	s.mu.Unlock()
+	return ch
+}
+
+// GetCaptureChannel returns the receive slot for a capture session.
+func (s *Session) GetCaptureChannel(sessionID string) chan []byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.captures[sessionID]
+}
+
+// UnregisterCaptureChannel drops the receive slot.
+func (s *Session) UnregisterCaptureChannel(sessionID string) {
+	s.mu.Lock()
+	if ch, ok := s.captures[sessionID]; ok {
+		close(ch)
+		delete(s.captures, sessionID)
+	}
+	s.mu.Unlock()
+}
+
+// SendCaptureStart tells the agent to begin a capture.
+func (s *Session) SendCaptureStart(sessionID, iface string, snaplen int) error {
+	payload := proto.CaptureStart{
+		SessionID: sessionID,
+		Iface:     iface,
+		Snaplen:   snaplen,
+	}
+	return s.sendTunnelMsg(proto.TypeCaptureStart, payload)
+}
+
+// SendCaptureStop tells the agent to stop a capture.
+func (s *Session) SendCaptureStop(sessionID string) error {
+	return s.sendTunnelMsg(proto.TypeCaptureStop, proto.CaptureStop{SessionID: sessionID})
+}
+
+// RouteCaptureData dispatches an inbound capture chunk to the waiting reader.
+func (s *Session) RouteCaptureData(sessionID string, data []byte) {
+	s.mu.Lock()
+	ch, ok := s.captures[sessionID]
+	s.mu.Unlock()
+	if !ok {
+		return
+	}
+	select {
+	case ch <- data:
+	default:
+		// drop on backpressure
+	}
 }

