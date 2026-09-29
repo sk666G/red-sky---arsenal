@@ -36,6 +36,10 @@ const (
 	TypeCaptureData  MessageType = "capture_data"
 	TypeCaptureDone  MessageType = "capture_done"
 	TypeCaptureFail  MessageType = "capture_fail"
+
+	// DNS exfil (agent -> core, over the wire as DNS queries)
+	TypeDNSExfilChunk MessageType = "dns_exfil_chunk"
+	TypeDNSExfilDone  MessageType = "dns_exfil_done"
 )
 
 // Envelope wraps every message. Payload is the raw JSON of the concrete type
@@ -164,4 +168,22 @@ type CaptureDone struct {
 type CaptureFail struct {
 	SessionID string `json:"session_id"`
 	Error     string `json:"error"`
+}
+
+
+// DNSExfilChunk is metadata about one DNS exfil payload. The actual bytes
+// travel in DNS query labels; this struct is only used to route the decoded
+// payload through the framework's internal message bus.
+type DNSExfilChunk struct {
+	SessionID string `json:"session_id"`
+	Seq       int    `json:"seq"`
+	Total     int    `json:"total"`
+	Payload   []byte `json:"payload"`
+}
+
+// DNSExfilDone signals a DNS exfil session completed.
+type DNSExfilDone struct {
+	SessionID string `json:"session_id"`
+	Bytes     int64  `json:"bytes"`
+	Chunks    int    `json:"chunks"`
 }

