@@ -1877,6 +1877,20 @@ func runAdEnum(conn net.Conn, sess *crypto.Session, ae proto.AdEnumStart) {
 		for _, e := range tpls {
 			sendEntry(e)
 		}
+	case "adcs_analyze":
+		cas, tpls, _ := adgo.EnumerateADCS(base, c)
+		caRisks, tplRisks := adgo.AnalyzeADCS(cas, tpls)
+		for _, r := range caRisks {
+			for _, v := range r.Vulnerabilities {
+				sendMsg("CA "+r.Name+" "+v+" — "+joinStrings(r.Notes, "; "), true, false)
+			}
+		}
+		for _, r := range tplRisks {
+			for _, v := range r.Vulnerabilities {
+				sendMsg("TEMPLATE "+r.Name+" "+v+" — "+joinStrings(r.Notes, "; "), true, false)
+			}
+		}
+		sendMsg("analyzed", true, false)
 	case "write":
 		runAdWrite(c, ae, sendMsg)
 	default:
