@@ -271,3 +271,8 @@ func log2(x float64) float64 {
 	}
 	return math.Log2(x)
 }
+
+// marshal is the internal JSON encoder used by the workflow collector.
+func (idx *Index) marshal() ([]byte, error) {
+	return json.Marshal(idx)
+}
