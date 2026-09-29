@@ -246,9 +246,10 @@ func UUIDStrings(in []byte) []string {
 		}
 		u := fmt.Sprintf("%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
 			chunk[0], chunk[1], chunk[2], chunk[3],
-			chunk[4], chunk[5], chunk[6], chunk[7],
-			chunk[8], chunk[9], chunk[10], chunk[11],
-			chunk[12], chunk[13], chunk[14], chunk[15])
+			chunk[4], chunk[5],
+			chunk[6], chunk[7],
+			chunk[8], chunk[9],
+			chunk[10], chunk[11], chunk[12], chunk[13], chunk[14], chunk[15])
 		out = append(out, u)
 	}
 	return out
@@ -268,7 +269,7 @@ func IPv4Strings(in []byte) []string {
 			copy(pad, chunk)
 			chunk = pad
 		}
-		out = append(out, fmt.Sprintf("10.%d.%d.%d", chunk[0], chunk[1], chunk[2], chunk[3]))
+		out = append(out, fmt.Sprintf("10.%d.%d.%d", chunk[0], chunk[1], chunk[2]))
 	}
 	return out
 }
