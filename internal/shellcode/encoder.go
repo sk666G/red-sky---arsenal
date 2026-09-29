@@ -87,22 +87,53 @@ func pickXORKey(in []byte) byte {
 
 // --- ROT13 ---
 
-type rotEncoder struct{ n int }
+type rotEncoder struct {
+	n           int
+	lettersOnly bool
+}
 
-// NewROT returns a byte rotation encoder (ROT13 = NewROT(13)).
-func NewROT(n int) Encoder { return &rotEncoder{n: n & 0xFF} }
+// NewROT returns a byte rotation encoder (rotates every byte).
+// For the classic letter-only ROT13 cipher, use NewROT13.
+func NewROT(n int) Encoder { return &rotEncoder{n: n & 0xFF, lettersOnly: false} }
 
-func (e *rotEncoder) Name() string { return fmt.Sprintf("rot%d", e.n) }
+// NewROT13 returns the classic letter-only ROT13 cipher — only A-Z and
+// a-z are rotated, everything else is passed through unchanged.
+func NewROT13() Encoder { return &rotEncoder{n: 13, lettersOnly: true} }
+
+func (e *rotEncoder) Name() string {
+	if e.lettersOnly && e.n == 13 {
+		return "rot13"
+	}
+	return fmt.Sprintf("rot%d", e.n)
+}
 
 func (e *rotEncoder) Encode(in []byte) []byte {
 	out := make([]byte, len(in))
+	if e.lettersOnly {
+		for i, b := range in {
+			switch {
+			case b >= 'a' && b <= 'z':
+				out[i] = byte('a' + (int(b-'a')+e.n)%26)
+			case b >= 'A' && b <= 'Z':
+				out[i] = byte('A' + (int(b-'A')+e.n)%26)
+			default:
+				out[i] = b
+			}
+		}
+		return out
+	}
 	for i, b := range in {
 		out[i] = byte((int(b) + e.n) & 0xFF)
 	}
 	return out
 }
 
-func (e *rotEncoder) Key() string { return fmt.Sprintf("rot_n=%d", e.n) }
+func (e *rotEncoder) Key() string {
+	if e.lettersOnly && e.n == 13 {
+		return "rot13-letters-only"
+	}
+	return fmt.Sprintf("rot_n=%d", e.n)
+}
 
 // --- null-free ---
 
@@ -233,17 +264,20 @@ func (e *base64Encoder) Key() string { return "base64-standard" }
 // --- uuid (16 bytes per UUID) ---
 
 // UUIDStrings packs the input into UUID-formatted strings. Every 16 bytes
-// become one line in 8-4-4-4-12 form. Useful when the only channel out is
-// a field that accepts UUIDs.
+// become one line in 8-4-4-4-12 form. Short tails are zero-padded. Useful
+// when the only channel out is a field that accepts UUIDs.
 func UUIDStrings(in []byte) []string {
+	if len(in) == 0 {
+		return nil
+	}
 	var out []string
 	for i := 0; i < len(in); i += 16 {
-		chunk := in[i : i+16]
-		if len(chunk) < 16 {
-			pad := make([]byte, 16)
-			copy(pad, chunk)
-			chunk = pad
+		end := i + 16
+		if end > len(in) {
+			end = len(in)
 		}
+		chunk := make([]byte, 16)
+		copy(chunk, in[i:end])
 		u := fmt.Sprintf("%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
 			chunk[0], chunk[1], chunk[2], chunk[3],
 			chunk[4], chunk[5],
@@ -258,17 +292,20 @@ func UUIDStrings(in []byte) []string {
 // --- ipv4 (4 bytes per address) ---
 
 // IPv4Strings packs the input into dotted-quad strings. Every 4 bytes
-// become one "10.x.y.z" address. Useful for exfil through DNS queries
-// where each query carries a fixed-size label.
+// become one "10.x.y.z" address. Short tails are zero-padded. Useful for
+// exfil through DNS queries where each query carries a fixed-size label.
 func IPv4Strings(in []byte) []string {
+	if len(in) == 0 {
+		return nil
+	}
 	var out []string
 	for i := 0; i < len(in); i += 4 {
-		chunk := in[i : i+4]
-		if len(chunk) < 4 {
-			pad := make([]byte, 4)
-			copy(pad, chunk)
-			chunk = pad
+		end := i + 4
+		if end > len(in) {
+			end = len(in)
 		}
+		chunk := make([]byte, 4)
+		copy(chunk, in[i:end])
 		out = append(out, fmt.Sprintf("10.%d.%d.%d", chunk[0], chunk[1], chunk[2]))
 	}
 	return out
@@ -282,7 +319,7 @@ func EncoderByName(name string, key uint8) (Encoder, error) {
 	case "xor":
 		return NewXOR(key), nil
 	case "rot13":
-		return NewROT(13), nil
+		return NewROT13(), nil
 	case "rot":
 		return NewROT(int(key)), nil
 	case "null_free", "nullfree":
