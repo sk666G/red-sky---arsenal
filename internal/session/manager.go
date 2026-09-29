@@ -47,10 +47,10 @@ type Session struct {
 	Joined   time.Time
 	LastSeen time.Time
 
-	conn    net.Conn
-	crypto  *crypto.Session
-	writeMu sync.Mutex
-	write  chan *Task
+	conn     net.Conn
+	crypto   *crypto.Session
+	writeMu  sync.Mutex
+	write    chan *Task
 	tasks    map[string]*Task // keyed by task ID
 	tunnels  map[string]chan []byte
 	captures map[string]chan []byte
@@ -341,7 +341,6 @@ func (m *Manager) readerLoop(s *Session) {
 // ErrNoSession is returned when a task is submitted to a dead session.
 var ErrNoSession = errors.New("session: no such agent")
 
-
 // --- Tunnel / AgentSender interface ---
 
 // SendTunnelOpen tells the agent to dial host:port for the given tunnel.
@@ -427,7 +426,6 @@ func (s *Session) UnregisterTunnel(tunnelID string) {
 	s.mu.Unlock()
 }
 
-
 // --- capture ---
 
 // RegisterCaptureChannel creates a receive slot for a capture session.
@@ -485,7 +483,6 @@ func (s *Session) RouteCaptureData(sessionID string, data []byte) {
 		// drop on backpressure
 	}
 }
-
 
 // SendWirelessStart tells the agent to begin an 802.11 capture.
 func (s *Session) SendWirelessStart(sessionID, iface string, channel int) error {
@@ -549,3 +546,8 @@ func (s *Session) SendIcsStart(sessionID string, req proto.IcsStart) error {
 	return s.sendTunnelMsg(proto.TypeIcsStart, req)
 }
 
+// SendCloudStart kicks off a cloud-provider operation on the agent.
+func (s *Session) SendCloudStart(sessionID string, req proto.CloudStart) error {
+	req.SessionID = sessionID
+	return s.sendTunnelMsg(proto.TypeCloudStart, req)
+}

