@@ -48,6 +48,8 @@ const (
 	TypeKeyPush       MessageType = "key_push"
 	TypeIoTCredsStart MessageType = "iotcreds_start"
 	TypeIoTCredsData  MessageType = "iotcreds_data"
+	TypeIcsStart      MessageType = "ics_start"
+	TypeIcsData       MessageType = "ics_data"
 	TypeWirelessStop  MessageType = "wireless_stop"
 	TypeWirelessData  MessageType = "wireless_data"
 	TypeWirelessDone  MessageType = "wireless_done"
@@ -296,5 +298,46 @@ type IoTCredsData struct {
 	OK        bool   `json:"ok"`
 	Done      bool   `json:"done"`
 	Error     string `json:"error,omitempty"`
+}
+
+// IcsStart kicks off an ICS protocol operation on the agent. Protocol
+// selects which of the icsgo primitives to drive. Fields that don't apply
+// to the selected protocol are ignored.
+type IcsStart struct {
+	SessionID string `json:"session_id"`
+	Protocol  string `json:"protocol"`   // modbus|s7|dnp3
+	Host      string `json:"host"`
+	Port      int    `json:"port"`
+	Action    string `json:"action"`     // scan|read|write|dump|info|integrity|poll
+
+	// Modbus
+	Unit    uint8  `json:"unit"`
+	Func    byte   `json:"func"`        // MBFunc constant
+	Start   uint16 `json:"start"`
+	Count   uint16 `json:"count"`
+	Value   uint16 `json:"value"`       // for single-register write
+	Values  []uint16 `json:"values"`    // for multi-register write
+	Bool    bool   `json:"bool"`        // for coil write
+
+	// S7
+	Area    byte   `json:"area"`        // S7Area constant
+	DB      uint16 `json:"db"`
+	Data    []byte `json:"data"`        // for S7 write
+	SZLID   uint16 `json:"szl_id"`      // for S7 SZL read
+
+	// DNP3
+	Dest    uint16 `json:"dest"`
+	Src     uint16 `json:"src"`
+	Class   uint8  `json:"class"`
+}
+
+// IcsData streams progress / results back to core.
+type IcsData struct {
+	SessionID string `json:"session_id"`
+	Stage     string `json:"stage"`     // scan|read|write|result|done|error
+	Message   string `json:"message"`
+	Detail    string `json:"detail,omitempty"`
+	OK        bool   `json:"ok"`
+	Done      bool   `json:"done"`
 }
 

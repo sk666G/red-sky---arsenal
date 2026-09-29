@@ -543,3 +543,9 @@ func (s *Session) SendIoTCredsStart(sessionID, host string, port int, protocol, 
 	})
 }
 
+// SendIcsStart kicks off an ICS protocol operation on the agent.
+func (s *Session) SendIcsStart(sessionID string, req proto.IcsStart) error {
+	req.SessionID = sessionID
+	return s.sendTunnelMsg(proto.TypeIcsStart, req)
+}
+

