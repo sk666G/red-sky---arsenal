@@ -7,14 +7,11 @@ from Program.utils import print_info, print_err
 def _usage():
     print_info("redsky evasion <sub-command> [args...]")
     print_info("")
-    print_info("  av <list|show|plan> [vendor]")
-    print_info("      per-vendor AV/EDR bypass cookbook (defender, crowdstrike, ...)")
-    print_info("")
-    print_info("  loader <list|gen> [technique] [--shellcode HEX] [--out file.cpp] [--with-hellsgate]")
-    print_info("      shellcode loader generator: virtualalloc / ntmap / modstomp / callback / fiber / apc / earlybird / hollow")
-    print_info("")
-    print_info("  sandbox <check|emit|list> [--out file]")
-    print_info("      anti-VM checks against this host, or emit C++ sandbox detector")
+    print_info("  catalog                          list bypass techniques (10)")
+    print_info("  info <name>                      reference for one technique")
+    print_info("  generators                       list runnable snippet generators")
+    print_info("  gen <name> [--out FILE]          emit a snippet (C#/PS1/C++)")
+    print_info("  all [--out DIR]                  emit every snippet")
 
 
 def run_cli(args: List[str]) -> int:
@@ -26,19 +23,8 @@ def run_cli(args: List[str]) -> int:
         _usage()
         return 0
 
-    if sub in ("av", "edr", "av_bypass", "a"):
-        from .av_bypass import run_cli as _f
-        return int(_f(args[1:]))
-    if sub in ("loader", "loaders", "l"):
-        from .loader import run_cli as _f
-        return int(_f(args[1:]))
-    if sub in ("sandbox", "sbx", "anti-vm", "s"):
-        from .sandbox import run_cli as _f
-        return int(_f(args[1:]))
-
-    print_err("unknown evasion sub-command: " + sub)
-    _usage()
-    return 2
+    from .evasion import run_cli as _f
+    return int(_f(args))
 
 
 if __name__ == "__main__":
