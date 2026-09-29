@@ -7,17 +7,17 @@ from Program.utils import print_info, print_err
 def _usage():
     print_info("redsky iot <sub-command> [args...]")
     print_info("")
-    print_info("  discover [scan <cidr>|list]")
-    print_info("      ARP + mDNS + SSDP + MQTT + CoAP discovery across the LAN")
+    print_info("  default_creds  spray --host ip:port --protocol http|https|telnet|ssh")
+    print_info("      iterate default creds against IoT targets, log hits")
     print_info("")
-    print_info("  defaults <list|export|spray> [--vendor X] [--proto http]")
-    print_info("      default credential catalog + rate-limited spray")
+    print_info("  mqtt           probe | snarf | publish")
+    print_info("      MQTT open-broker probe, firehose subscribe, topic injection")
     print_info("")
-    print_info("  mqtt <connect|subscribe|topics|publish|acl> <host> [--topic #]")
-    print_info("      broker probe, subscribe-all, topic enumeration, ACL probing")
+    print_info("  coap           discover | get | put | post | fuzz")
+    print_info("      CoAP resource discovery + per-resource read/write + path fuzz")
     print_info("")
-    print_info("  firmware <list|unpack|secrets> [target]")
-    print_info("      binwalk + ubi/squashfs extraction + secret hunting")
+    print_info("  firmware       analyze --image FILE")
+    print_info("      carve, extract, and secret-sweep an IoT firmware image")
 
 
 def run_cli(args: List[str]) -> int:
@@ -29,14 +29,14 @@ def run_cli(args: List[str]) -> int:
         _usage()
         return 0
 
-    if sub in ("discover", "scan", "d"):
-        from .discover import run_cli as _f
+    if sub in ("default_creds", "creds", "dc"):
+        from .default_creds import run_cli as _f
         return int(_f(args[1:]))
-    if sub in ("defaults", "creds", "c"):
-        from .defaults import run_cli as _f
-        return int(_f(args[1:]))
-    if sub in ("mqtt", "broker", "m"):
+    if sub in ("mqtt", "m"):
         from .mqtt import run_cli as _f
+        return int(_f(args[1:]))
+    if sub in ("coap", "c"):
+        from .coap import run_cli as _f
         return int(_f(args[1:]))
     if sub in ("firmware", "fw", "f"):
         from .firmware import run_cli as _f

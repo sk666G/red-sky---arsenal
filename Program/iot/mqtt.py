@@ -1,15 +1,19 @@
-# language: Python, file: Program/iot/mqtt.py, target: Red Sky iot — MQTT recon
-# Talks raw MQTT 3.1.1 over TCP/TLS. No paho dependency.
-#   - connect     : CONNECT/CONNACK, auth-required detection, broker banner
-#   - subscribe   : subscribe to a wildcard topic (default "#") and dump messages
-#   - topics      : enumeration via $SYS/#, common IoT topic names, retained-message probe
-#   - publish     : craft PUBLISH (retained or not) to a topic — for testing your
-#                   own broker; also useful for simulating a device's command topic
-#   - acl         : probe which topics the anonymous user is allowed to write
+# language: Python, file: Program/iot/mqtt.py, target: Red Sky IoT — MQTT attack
+# Raw-socket MQTT 3.1.1 client. No paho dependency — the wire format is
+# simple enough that building it directly is shorter than the library.
+#
+# Modes:
+#   probe     — connect with no credentials, list topics seen in a short
+#               subscribe window. Open brokers are still depressingly common
+#               on IoT deployments.
+#   snarf     — subscribe # and dump every message to a JSONL for the
+#               duration. The MQTT "shell" of an IoT network.
+#   publish   — send a message to a topic (payload + retain flag). Used for
+#               topic injection (fake sensor readings) or command injection
+#               into device control topics.
 
 import json
 import socket
-import ssl
 import struct
 import sys
 import time
@@ -23,423 +27,324 @@ from Program.utils.paths import OUTPUT_DIR
 
 IOT_DIR = OUTPUT_DIR / "iot"
 MQTT_DIR = IOT_DIR / "mqtt"
-MQTT_DIR.mkdir(parents=True, exist_ok=True)
 
 
-# ── wire helpers ──
+# ── wire format ─────────────────────────────────────────────────────────────
+# fixed header: byte 0 = type<<4 | flags, then remaining-length (varint)
+# connect: variable header (proto name "MQTT", level 4, flags, keepalive)
+#          then payload (client id, [will topic, will msg], [user], [pass])
+
+PKT_CONNECT     = 1
+PKT_CONNACK     = 2
+PKT_PUBLISH     = 3
+PKT_PUBACK      = 4
+PKT_SUBSCRIBE   = 8
+PKT_SUBACK      = 9
+PKT_PINGREQ     = 12
+PKT_PINGRESP    = 13
+PKT_DISCONNECT  = 14
+
+
 def _encode_len(n: int) -> bytes:
-    out = b""
+    """MQTT variable-length integer — up to 4 bytes."""
+    out = bytearray()
     while True:
-        b = n & 0x7F
-        n >>= 7
-        if n:
+        b = n % 128
+        n //= 128
+        if n > 0:
             b |= 0x80
-        out += bytes([b])
-        if not n:
+        out.append(b)
+        if n == 0:
             break
-    return out
+    return bytes(out)
 
 
-def _encode_str(s: str) -> bytes:
-    b = s.encode("utf-8")
-    return struct.pack(">H", len(b)) + b
-
-
-def _packet(pkt_type: int, flags: int, body: bytes) -> bytes:
-    return bytes([(pkt_type << 4) | flags]) + _encode_len(len(body)) + body
-
-
-def connect_packet(client_id: str, user: str = "", password: str = "",
-                   keepalive: int = 60, clean: bool = True) -> bytes:
-    vh = b"\x00\x04MQTT\x04"
-    flags = 0
-    if clean:
-        flags |= 0x02
-    payload = _encode_str(client_id)
-    if user:
-        flags |= 0x80
-        payload += _encode_str(user)
-    if password:
-        flags |= 0x40
-        payload += _encode_str(password)
-    vh += bytes([flags]) + struct.pack(">H", keepalive)
-    return _packet(1, 0, vh + payload)
-
-
-def subscribe_packet(topic: str, qos: int = 0, pkt_id: int = 1) -> bytes:
-    body = struct.pack(">H", pkt_id) + _encode_str(topic) + bytes([qos])
-    return _packet(8, 2, body)  # flags 0x02 required for SUBSCRIBE
-
-
-def publish_packet(topic: str, payload: bytes, qos: int = 0, retain: bool = False,
-                   pkt_id: int = 1) -> bytes:
-    flags = (qos << 1) | (1 if retain else 0)
-    body = _encode_str(topic)
-    if qos > 0:
-        body += struct.pack(">H", pkt_id)
-    body += payload
-    return _packet(3, flags, body)
-
-
-def disconnect_packet() -> bytes:
-    return _packet(14, 0, b"")
-
-
-def _read_remaining_len(sock: socket.socket) -> int:
+def _read_len(sock: socket.socket) -> int:
     mult = 1
-    value = 0
+    val = 0
     for _ in range(4):
         b = sock.recv(1)
         if not b:
-            raise ConnectionError("closed")
-        v = b[0]
-        value += (v & 0x7F) * mult
-        if not (v & 0x80):
-            break
+            raise ConnectionError("eof reading length")
+        digit = b[0]
+        val += (digit & 0x7F) * mult
+        if not (digit & 0x80):
+            return val
         mult *= 128
-    return value
+    raise ValueError("malformed length")
 
 
-def _read_packet(sock: socket.socket) -> Tuple[int, bytes]:
-    header = sock.recv(1)
-    if not header:
-        raise ConnectionError("closed")
-    pkt_type = header[0] >> 4
-    flags = header[0] & 0x0F
-    length = _read_remaining_len(sock)
+def _pack_str(s: str) -> bytes:
+    b = s.encode("utf-8")
+    return struct.pack("!H", len(b)) + b
+
+
+def build_connect(client_id: str, user: str = "", pw: str = "",
+                  keepalive: int = 30, clean: bool = True) -> bytes:
+    flags = 0
+    if clean:
+        flags |= 0x02
+    payload = _pack_str(client_id)
+    if user:
+        flags |= 0x80
+        payload += _pack_str(user)
+    if pw:
+        flags |= 0x40
+        payload += _pack_str(pw)
+    vh = _pack_str("MQTT") + bytes([4, flags]) + struct.pack("!H", keepalive)
+    body = vh + payload
+    return bytes([PKT_CONNECT << 4]) + _encode_len(len(body)) + body
+
+
+def build_subscribe(pkt_id: int, topic: str, qos: int = 0) -> bytes:
+    vh = struct.pack("!H", pkt_id)
+    payload = _pack_str(topic) + bytes([qos])
+    body = vh + payload
+    # fixed header flags for SUBSCRIBE are 0b0010
+    return bytes([(PKT_SUBSCRIBE << 4) | 0x02]) + _encode_len(len(body)) + body
+
+
+def build_publish(topic: str, payload: bytes, qos: int = 0, retain: bool = False) -> bytes:
+    flags = (qos & 0x03) << 1
+    if retain:
+        flags |= 0x01
+    vh = _pack_str(topic)
+    if qos > 0:
+        vh += struct.pack("!H", 1)  # packet id
+    body = vh + payload
+    return bytes([(PKT_PUBLISH << 4) | flags]) + _encode_len(len(body)) + body
+
+
+def build_disconnect() -> bytes:
+    return bytes([PKT_DISCONNECT << 4, 0])
+
+
+def build_pingreq() -> bytes:
+    return bytes([PKT_PINGREQ << 4, 0])
+
+
+# ── connection ──────────────────────────────────────────────────────────────
+
+def connect_mqtt(host: str, port: int, client_id: str,
+                 user: str = "", pw: str = "",
+                 timeout: int = 8) -> Optional[socket.socket]:
+    try:
+        s = socket.create_connection((host, port), timeout=timeout)
+        s.settimeout(timeout)
+        s.sendall(build_connect(client_id, user, pw))
+        # read CONNACK: 4 bytes minimum
+        head = s.recv(1)
+        if not head or head[0] != (PKT_CONNACK << 4):
+            s.close()
+            return None
+        _ = _read_len(s)  # remaining length
+        body = s.recv(2)
+        if len(body) < 2:
+            s.close()
+            return None
+        rc = body[1]
+        if rc != 0:
+            s.close()
+            return None
+        return s
+    except Exception:
+        return None
+
+
+def _read_packet(s: socket.socket) -> Tuple[int, int, bytes]:
+    """Returns (type, flags, body). Raises on EOF."""
+    h = s.recv(1)
+    if not h:
+        raise ConnectionError("eof")
+    b0 = h[0]
+    ptype = b0 >> 4
+    flags = b0 & 0x0F
+    rl = _read_len(s)
     body = b""
-    while len(body) < length:
-        chunk = sock.recv(length - len(body))
+    while len(body) < rl:
+        chunk = s.recv(rl - len(body))
         if not chunk:
-            raise ConnectionError("short")
+            raise ConnectionError("eof body")
         body += chunk
-    return (pkt_type << 4) | flags, body
+    return ptype, flags, body
 
 
-def _open(host: str, port: int, tls: bool, timeout: float = 5.0) -> socket.socket:
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.settimeout(timeout)
-    s.connect((host, port))
-    if tls:
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-        s = ctx.wrap_socket(s, server_hostname=host)
-    return s
+def _decode_publish(flags: int, body: bytes) -> Tuple[str, bytes]:
+    tl = struct.unpack("!H", body[:2])[0]
+    topic = body[2:2+tl].decode("utf-8", errors="replace")
+    off = 2 + tl
+    qos = (flags >> 1) & 0x03
+    if qos > 0:
+        off += 2
+    payload = body[off:]
+    return topic, payload
 
 
-# ── commands ──
-def cmd_connect(host: str, port: int, tls: bool, user: str, password: str) -> int:
-    print_info("MQTT connect probe")
-    print_kv("host", host)
-    print_kv("port", str(port))
-    print_kv("tls", "yes" if tls else "no")
-    print_kv("user", user or "(anonymous)")
-    print()
+# ── commands ────────────────────────────────────────────────────────────────
 
-    try:
-        s = _open(host, port, tls)
-    except Exception as e:
-        print_err("cannot open: " + str(e))
+def cmd_probe(host: str, port: int, user: str, pw: str, seconds: int) -> int:
+    MQTT_DIR.mkdir(parents=True, exist_ok=True)
+    cid = "redsky-" + str(int(time.time()))
+    s = connect_mqtt(host, port, cid, user, pw)
+    if not s:
+        print_err("connect failed (auth required, or port closed, or not MQTT)")
         return 1
+    print_ok("connected (anon-clean)")
+    print_kv("broker", host + ":" + str(port))
 
-    cid = "rs-" + str(int(time.time()) & 0xFFFF)
-    try:
-        s.sendall(connect_packet(cid, user, password))
-        pkt, body = _read_packet(s)
-        if pkt >> 4 != 2:
-            print_err("unexpected response: 0x{:02x}".format(pkt))
-            return 1
-        rc = body[1] if len(body) >= 2 else 0xFF
-        session_present = bool(body[0] & 1) if body else False
-        codes = {
-            0: "accepted",
-            1: "rejected: unacceptable protocol version",
-            2: "rejected: identifier rejected",
-            3: "rejected: server unavailable",
-            4: "rejected: bad user/password",
-            5: "rejected: not authorized",
-        }
-        print_kv("session present", str(session_present))
-        print_kv("return code", str(rc) + " (" + codes.get(rc, "unknown") + ")")
-        if rc == 0:
-            print()
-            print_ok("connection accepted")
-            if not user and not password:
-                print_warn("broker allows anonymous connections")
-        else:
-            print()
-            print_warn("connection rejected")
-    finally:
+    # subscribe to #
+    s.sendall(build_subscribe(1, "#", 0))
+    seen_topics = set()
+    end = time.time() + seconds
+    print_info("subscribed to # — listening " + str(seconds) + "s")
+    while time.time() < end:
         try:
-            s.sendall(disconnect_packet())
-        except Exception:
-            pass
-        s.close()
+            ptype, flags, body = _read_packet(s)
+        except (socket.timeout, ConnectionError):
+            continue
+        if ptype == PKT_PUBLISH:
+            topic, payload = _decode_publish(flags, body)
+            if topic not in seen_topics:
+                seen_topics.add(topic)
+                print("  " + SCARLET + topic + RESET + " " + ASH + str(len(payload)) + "B" + RESET)
+    s.sendall(build_disconnect())
+    s.close()
+    print()
+    print_kv("topics seen", len(seen_topics))
     return 0
 
 
-def cmd_subscribe(host: str, port: int, tls: bool, topic: str, duration: int,
-                  user: str, password: str, out_file: str) -> int:
-    print_info("MQTT subscribe")
-    print_kv("topic", topic)
-    print_kv("duration", str(duration) + "s")
-    print()
-    try:
-        s = _open(host, port, tls)
-    except Exception as e:
-        print_err("cannot open: " + str(e))
-        return 1
-
-    cid = "rs-sub-" + str(int(time.time()) & 0xFFFF)
-    s.sendall(connect_packet(cid, user, password))
-    pkt, body = _read_packet(s)
-    if pkt >> 4 != 2 or (len(body) >= 2 and body[1] != 0):
-        print_err("connect failed")
-        return 1
-
-    print_ok("connected, subscribing to " + topic)
-    s.sendall(subscribe_packet(topic, 0, 1))
-    pkt, _ = _read_packet(s)
-    if pkt >> 4 != 9:
-        print_err("subscribe failed")
-        return 1
-    print_ok("subscribed")
-
-    messages = []
-    t0 = time.time()
-    s.settimeout(1.0)
-    try:
-        while time.time() - t0 < duration:
-            try:
-                pkt, body = _read_packet(s)
-                if pkt >> 4 != 3:  # PUBLISH
-                    continue
-                topic_len = struct.unpack(">H", body[:2])[0]
-                topic_name = body[2:2+topic_len].decode("utf-8", errors="replace")
-                payload = body[2+topic_len:]
-                msg = {"ts": time.time(), "topic": topic_name, "payload": payload.decode("utf-8", errors="replace")}
-                messages.append(msg)
-                print(SCARLET + "[msg]" + RESET + " " + BONE + topic_name + RESET
-                      + "  " + CLOT + msg["payload"][:200] + RESET)
-            except socket.timeout:
-                continue
-            except ConnectionError:
-                break
-    finally:
-        try:
-            s.sendall(disconnect_packet())
-        except Exception:
-            pass
-        s.close()
-
-    out = Path(out_file) if out_file else MQTT_DIR / ("subscribe_" + str(int(time.time())) + ".json")
-    out.write_text(json.dumps(messages, indent=2))
-    print()
-    print_kv("messages", str(len(messages)))
-    print_kv("saved", out)
-    return 0
-
-
-def cmd_topics(host: str, port: int, tls: bool, user: str, password: str,
-               duration: int, out_file: str) -> int:
-    print_info("MQTT topic enumeration — subscribe to # and $SYS/#")
-    print()
-    try:
-        s = _open(host, port, tls)
-    except Exception as e:
-        print_err("cannot open: " + str(e))
-        return 1
-
-    cid = "rs-topics-" + str(int(time.time()) & 0xFFFF)
-    s.sendall(connect_packet(cid, user, password))
-    pkt, body = _read_packet(s)
-    if pkt >> 4 != 2 or (len(body) >= 2 and body[1] != 0):
-        print_err("connect failed")
-        return 1
-
-    s.sendall(subscribe_packet("#", 0, 1))
-    _read_packet(s)
-    s.sendall(subscribe_packet("$SYS/#", 0, 2))
-    _read_packet(s)
-    print_ok("subscribed to # and $SYS/#")
-
-    # kick $SYS by publishing a no-op to a wildcard-less topic? not helpful.
-    # $SYS topics publish on their own schedule once subscribed.
-
-    seen_topics = {}
-    t0 = time.time()
-    s.settimeout(1.0)
-    try:
-        while time.time() - t0 < duration:
-            try:
-                pkt, body = _read_packet(s)
-                if pkt >> 4 != 3:
-                    continue
-                tl = struct.unpack(">H", body[:2])[0]
-                t = body[2:2+tl].decode("utf-8", errors="replace")
-                seen_topics[t] = seen_topics.get(t, 0) + 1
-            except socket.timeout:
-                continue
-            except ConnectionError:
-                break
-    finally:
-        try:
-            s.sendall(disconnect_packet())
-        except Exception:
-            pass
-        s.close()
-
-    print()
-    print_info(str(len(seen_topics)) + " unique topic(s) observed")
-    print()
-    for t, n in sorted(seen_topics.items()):
-        print("  " + ARTERY + "*" + RESET + " " + BONE + t + RESET + "  "
-              + ASH + str(n) + " msg" + RESET)
-
-    out = Path(out_file) if out_file else MQTT_DIR / ("topics_" + str(int(time.time())) + ".json")
-    out.write_text(json.dumps(seen_topics, indent=2))
-    print()
-    print_kv("saved", out)
-    return 0
-
-
-def cmd_publish(host: str, port: int, tls: bool, topic: str, payload: str,
-                retain: bool, user: str, password: str) -> int:
-    print_info("MQTT publish")
-    print_kv("topic", topic)
-    print_kv("payload", payload[:100])
-    print_kv("retain", "yes" if retain else "no")
-    print()
-    try:
-        s = _open(host, port, tls)
-    except Exception as e:
-        print_err("cannot open: " + str(e))
-        return 1
-
-    cid = "rs-pub-" + str(int(time.time()) & 0xFFFF)
-    s.sendall(connect_packet(cid, user, password))
-    pkt, body = _read_packet(s)
-    if pkt >> 4 != 2 or (len(body) >= 2 and body[1] != 0):
+def cmd_snarf(host: str, port: int, user: str, pw: str, seconds: int, out: str) -> int:
+    MQTT_DIR.mkdir(parents=True, exist_ok=True)
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    out_path = Path(out) if out else MQTT_DIR / ("snarf_" + ts + ".jsonl")
+    cid = "redsky-" + str(int(time.time()))
+    s = connect_mqtt(host, port, cid, user, pw)
+    if not s:
         print_err("connect failed")
         return 1
     print_ok("connected")
+    print_kv("broker", host + ":" + str(port))
+    print_kv("out", out_path)
 
-    s.sendall(publish_packet(topic, payload.encode(), qos=0, retain=retain))
-    time.sleep(0.3)
-    s.sendall(disconnect_packet())
+    s.sendall(build_subscribe(1, "#", 0))
+    end = time.time() + seconds
+    n = 0
+    with out_path.open("w") as f:
+        while time.time() < end:
+            try:
+                ptype, flags, body = _read_packet(s)
+            except (socket.timeout, ConnectionError):
+                continue
+            if ptype == PKT_PUBLISH:
+                topic, payload = _decode_publish(flags, body)
+                rec = {
+                    "ts": time.time(),
+                    "topic": topic,
+                    "payload_len": len(payload),
+                    "payload_b64": __import__("base64").b64encode(payload).decode(),
+                }
+                f.write(json.dumps(rec) + "\n")
+                n += 1
+                if n % 100 == 0:
+                    print("  " + ASH + str(n) + " messages" + RESET)
+    s.sendall(build_disconnect())
     s.close()
-    print_ok("published")
+    print()
+    print_ok("messages captured: " + str(n))
+    print_kv("out", out_path)
     return 0
 
 
-def cmd_acl(host: str, port: int, tls: bool, user: str, password: str) -> int:
-    """Probe whether the anonymous user can publish to common device topics.
-    Publishes a harmless __rs_probe__ payload to likely command topics and sees
-    if the broker disconnects us (indicating ACL denial)."""
-    print_info("MQTT ACL probe — which topics accept our writes")
-    print()
-
-    probes = [
-        "cmd", "command", "control", "shell",
-        "home/+/set", "devices/+/set", "zigbee2mqtt/+/set",
-        "esphome/+/command", "tasmota/+/cmd",
-        "device/+/command", "iot/+/cmd",
-        "shellies/+/command",
-    ]
-
-    allowed = []
-    denied = []
-
-    for topic in probes:
-        try:
-            s = _open(host, port, tls, timeout=4.0)
-        except Exception as e:
-            print_err("cannot connect: " + str(e))
-            return 1
-
-        try:
-            cid = "rs-acl-" + str(int(time.time() * 1000) & 0xFFFF)
-            s.sendall(connect_packet(cid, user, password))
-            pkt, body = _read_packet(s)
-            if pkt >> 4 != 2 or (len(body) >= 2 and body[1] != 0):
-                denied.append((topic, "connect rejected"))
-                continue
-
-            s.sendall(publish_packet(topic, b"__rs_probe__", qos=0, retain=False))
-            time.sleep(0.3)
-            # if broker accepted, we're still connected -> send a PINGREQ (12)
-            s.sendall(_packet(12, 0, b""))
-            try:
-                s.settimeout(1.5)
-                pkt, _ = _read_packet(s)
-                if pkt >> 4 == 13:  # PINGRESP
-                    allowed.append(topic)
-                    print("  " + SCARLET + "OK " + RESET + BONE + topic + RESET)
-            except Exception:
-                denied.append((topic, "no PINGRESP"))
-        finally:
-            try:
-                s.sendall(disconnect_packet())
-            except Exception:
-                pass
-            s.close()
-
-    print()
-    print_kv("allowed", str(len(allowed)))
-    print_kv("denied/closed", str(len(denied)))
-    if allowed:
-        print()
-        print_warn("broker accepts anonymous writes to: " + ", ".join(allowed[:5]))
+def cmd_publish(host: str, port: int, user: str, pw: str,
+                topic: str, message: str, retain: bool) -> int:
+    cid = "redsky-" + str(int(time.time()))
+    s = connect_mqtt(host, port, cid, user, pw)
+    if not s:
+        print_err("connect failed")
+        return 1
+    payload = message.encode()
+    if message.startswith("@"):
+        p = Path(message[1:])
+        if p.exists():
+            payload = p.read_bytes()
+            print_info("payload loaded from " + str(p) + " (" + str(len(payload)) + "B)")
+    s.sendall(build_publish(topic, payload, qos=0, retain=retain))
+    time.sleep(0.3)
+    s.sendall(build_disconnect())
+    s.close()
+    print_ok("published")
+    print_kv("topic", topic)
+    print_kv("bytes", len(payload))
+    print_kv("retain", "yes" if retain else "no")
     return 0
 
 
 def run_cli(args):
     import argparse
-    p = argparse.ArgumentParser(prog="redsky iot mqtt", add_help=False)
-    p.add_argument("-h", "--help", action="store_true")
-    p.add_argument("action", nargs="?", default="connect",
-                   choices=["connect", "subscribe", "topics", "publish", "acl"])
-    p.add_argument("host", nargs="?", default="")
-    p.add_argument("--port", type=int, default=1883)
-    p.add_argument("--tls", action="store_true")
-    p.add_argument("--user", default="")
-    p.add_argument("--password", default="")
-    p.add_argument("--topic", default="#")
-    p.add_argument("--payload", default="hello")
-    p.add_argument("--retain", action="store_true")
-    p.add_argument("--duration", type=int, default=60)
-    p.add_argument("--out", default="")
+    sub = args[0] if args else "help"
+    rest = args[1:] if args else []
 
-    try:
-        ns = p.parse_args(args)
-    except SystemExit:
-        print_err("usage: redsky iot mqtt <connect|subscribe|topics|publish|acl> <host> [opts]")
-        return 2
-
-    if ns.help:
-        print_info("connect   <host>                    -- CONNECT/CONNACK check")
-        print_info("subscribe <host> --topic '#' --duration 60")
-        print_info("topics    <host> --duration 60       -- enumerate observed topics")
-        print_info("publish   <host> --topic X --payload Y [--retain]")
-        print_info("acl       <host>                    -- which write topics are open")
-        print_info("add --tls for 8883, --user / --password for auth")
+    if sub in ("-h", "--help", "help"):
+        print_info("redsky iot mqtt <sub-command>")
+        print_info("")
+        print_info("  probe   --host H [--port 1883] [--user U] [--pw P] [--seconds 15]")
+        print_info("      connect + list topics seen on # for N seconds")
+        print_info("  snarf   --host H [--port 1883] [--seconds 60] [--out FILE]")
+        print_info("      subscribe # and dump every message to JSONL")
+        print_info("  publish --host H --topic T --message 'text' [--retain]")
+        print_info("      publish a payload; --message @file loads from disk")
         return 0
 
-    if not ns.host:
-        print_err("give a host")
-        return 2
+    base = argparse.ArgumentParser(add_help=False)
+    base.add_argument("--host", required=False, default="")
+    base.add_argument("--port", type=int, default=1883)
+    base.add_argument("--user", default="")
+    base.add_argument("--pw", default="")
 
-    if ns.action == "connect":
-        return cmd_connect(ns.host, ns.port, ns.tls, ns.user, ns.password)
-    if ns.action == "subscribe":
-        return cmd_subscribe(ns.host, ns.port, ns.tls, ns.topic, ns.duration, ns.user, ns.password, ns.out)
-    if ns.action == "topics":
-        return cmd_topics(ns.host, ns.port, ns.tls, ns.user, ns.password, ns.duration, ns.out)
-    if ns.action == "publish":
-        return cmd_publish(ns.host, ns.port, ns.tls, ns.topic, ns.payload, ns.retain, ns.user, ns.password)
-    if ns.action == "acl":
-        return cmd_acl(ns.host, ns.port, ns.tls, ns.user, ns.password)
+    if sub == "probe":
+        p = argparse.ArgumentParser(prog="redsky iot mqtt probe", parents=[base], add_help=False)
+        p.add_argument("--seconds", type=int, default=15)
+        try:
+            ns = p.parse_args(rest)
+        except SystemExit:
+            print_err("usage: redsky iot mqtt probe --host H [--port 1883] [--seconds 15]")
+            return 2
+        if not ns.host:
+            print_err("--host required")
+            return 2
+        return cmd_probe(ns.host, ns.port, ns.user, ns.pw, ns.seconds)
+
+    if sub == "snarf":
+        p = argparse.ArgumentParser(prog="redsky iot mqtt snarf", parents=[base], add_help=False)
+        p.add_argument("--seconds", type=int, default=60)
+        p.add_argument("--out", default="")
+        try:
+            ns = p.parse_args(rest)
+        except SystemExit:
+            print_err("usage: redsky iot mqtt snarf --host H [--seconds 60] [--out FILE]")
+            return 2
+        if not ns.host:
+            print_err("--host required")
+            return 2
+        return cmd_snarf(ns.host, ns.port, ns.user, ns.pw, ns.seconds, ns.out)
+
+    if sub == "publish":
+        p = argparse.ArgumentParser(prog="redsky iot mqtt publish", parents=[base], add_help=False)
+        p.add_argument("--topic", required=False, default="")
+        p.add_argument("--message", required=False, default="")
+        p.add_argument("--retain", action="store_true")
+        try:
+            ns = p.parse_args(rest)
+        except SystemExit:
+            print_err("usage: redsky iot mqtt publish --host H --topic T --message 'text' [--retain]")
+            return 2
+        if not ns.host or not ns.topic or not ns.message:
+            print_err("--host, --topic, --message required")
+            return 2
+        return cmd_publish(ns.host, ns.port, ns.user, ns.pw, ns.topic, ns.message, ns.retain)
+
+    print_err("unknown mqtt sub-command: " + sub)
     return 2
 
 
