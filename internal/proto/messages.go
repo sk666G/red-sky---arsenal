@@ -58,6 +58,8 @@ const (
 	TypeSocialData    MessageType = "social_data"
 	TypeWebSSRFStart  MessageType = "webssrf_start"
 	TypeWebSSRFData   MessageType = "webssrf_data"
+	TypeWebSSTIStart  MessageType = "webssti_start"
+	TypeWebSSTIData   MessageType = "webssti_data"
 	TypeWirelessStop  MessageType = "wireless_stop"
 	TypeWirelessData  MessageType = "wireless_data"
 	TypeWirelessDone  MessageType = "wireless_done"
@@ -495,4 +497,25 @@ type WebSSRFData struct {
 	Err        string `json:"error,omitempty"`
 	DurationMs int64  `json:"duration_ms"`
 	Done       bool   `json:"done"`
+}
+
+// WebSSTIStart asks the agent to render SSTI payloads for a given engine
+// and command. The agent does not send them anywhere — it just builds the
+// payload strings and streams them back to the operator.
+type WebSSTIStart struct {
+	SessionID string `json:"session_id"`
+	Engine    string `json:"engine,omitempty"`   // empty = all engines
+	Cmd       string `json:"cmd"`                // command to embed
+	ListFPs   bool   `json:"list_fps,omitempty"` // return fingerprint probes instead
+}
+
+// WebSSTIData streams rendered payloads back to core.
+type WebSSTIData struct {
+	SessionID string `json:"session_id"`
+	Engine    string `json:"engine"`
+	Label     string `json:"label"`
+	Payload   string `json:"payload"`
+	Notes     string `json:"notes,omitempty"`
+	Kind      string `json:"kind"` // "payload" | "fingerprint" | "done"
+	Done      bool   `json:"done"`
 }

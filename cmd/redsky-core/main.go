@@ -138,6 +138,9 @@ func main() {
 	webSSRFThreads := flag.Int("webssrf-threads", 5, "probe concurrency")
 	webSSRFURL := flag.String("webssrf-url", "", "single URL to probe (overrides default set)")
 	webSSRFMethod := flag.String("webssrf-method", "GET", "method for the single-URL probe")
+	webSSTI := flag.String("webssti", "", "render SSTI payloads: pass engine (jinja2|twig|freemarker|velocity|smarty|mako|pebble|erb|tornado) or 'all'")
+	webSSTICmd := flag.String("webssti-cmd", "id", "command to embed in payloads")
+	webSSTIFPs := flag.Bool("webssti-fingerprints", false, "list fingerprint probes instead of payloads")
 	pmkidIface := flag.String("pmkid", "", "802.11 PMKID harvest: monitor-mode iface")
 	pmkidChannel := flag.Int("pmkid-channel", 0, "PMKID: set wifi channel before harvest")
 	pmkidDuration := flag.Duration("pmkid-duration", 60*time.Second, "PMKID: total harvest run time")
@@ -467,6 +470,15 @@ func main() {
 			URL:     *webSSRFURL,
 			Method:  *webSSRFMethod,
 			Threads: *webSSRFThreads,
+		})
+	}
+
+	// webssti dispatch — SSTI payload rendering via the first agent
+	if *webSSTI != "" || *webSSTIFPs {
+		go runWebSSTIDispatch(mgr, webSSTIArgs{
+			Engine:  *webSSTI,
+			Cmd:     *webSSTICmd,
+			ListFPs: *webSSTIFPs,
 		})
 	}
 
@@ -1158,5 +1170,37 @@ func runWebSSRFDispatch(mgr *session.Manager, a webSSRFArgs) {
 	}
 	if err := s.SendWebSSRFStart(sessionID, req); err != nil {
 		log.Printf("[webssrf] start: %v", err)
+	}
+}
+
+// webSSTIArgs carries the operator's -webssti* flags.
+type webSSTIArgs struct {
+	Engine  string
+	Cmd     string
+	ListFPs bool
+}
+
+// runWebSSTIDispatch waits for the first agent, fires a WebSSTIStart.
+func runWebSSTIDispatch(mgr *session.Manager, a webSSTIArgs) {
+	for len(mgr.Sessions()) == 0 {
+		time.Sleep(500 * time.Millisecond)
+	}
+	s := mgr.Sessions()[0]
+	sessionID := fmt.Sprintf("si-%d", time.Now().UnixNano())
+
+	eng := a.Engine
+	if eng == "all" {
+		eng = ""
+	}
+	log.Printf("[webssti] engine=%q cmd=%q fps=%v -> %s", eng, a.Cmd, a.ListFPs, s.AgentID)
+
+	req := proto.WebSSTIStart{
+		SessionID: sessionID,
+		Engine:    eng,
+		Cmd:       a.Cmd,
+		ListFPs:   a.ListFPs,
+	}
+	if err := s.SendWebSSTIStart(sessionID, req); err != nil {
+		log.Printf("[webssti] start: %v", err)
 	}
 }

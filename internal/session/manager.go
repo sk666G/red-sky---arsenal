@@ -569,3 +569,9 @@ func (s *Session) SendWebSSRFStart(sessionID string, req proto.WebSSRFStart) err
 	req.SessionID = sessionID
 	return s.sendTunnelMsg(proto.TypeWebSSRFStart, req)
 }
+
+// SendWebSSTIStart asks the agent to render SSTI payloads.
+func (s *Session) SendWebSSTIStart(sessionID string, req proto.WebSSTIStart) error {
+	req.SessionID = sessionID
+	return s.sendTunnelMsg(proto.TypeWebSSTIStart, req)
+}

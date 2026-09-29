@@ -276,6 +276,13 @@ func runSession(host string, port int, agentID, caFP string, beaconSec int) erro
 				continue
 			}
 			go runWebSSRF(conn, sess, ws)
+		case proto.TypeWebSSTIStart:
+			var ws proto.WebSSTIStart
+			if err := json.Unmarshal(env.Payload, &ws); err != nil {
+				log.Printf("[webssti] unmarshal: %v", err)
+				continue
+			}
+			go runWebSSTI(conn, sess, ws)
 		case proto.TypeWirelessStop:
 			var ws proto.WirelessStop
 			if err := json.Unmarshal(env.Payload, &ws); err != nil {
@@ -1497,4 +1504,49 @@ func runWebSSRF(conn net.Conn, sess *crypto.Session, ws proto.WebSSRFStart) {
 		send(r, false)
 	})
 	send(webgo.SSRFResult{}, true)
+}
+
+// runWebSSTI streams SSTI payloads or fingerprint probes for a given engine.
+func runWebSSTI(conn net.Conn, sess *crypto.Session, ws proto.WebSSTIStart) {
+	send := func(kind, engine, label, payload, notes string) {
+		sendTunnelAck(conn, sess, proto.TypeWebSSTIData, proto.WebSSTIData{
+			SessionID: ws.SessionID,
+			Engine:    engine,
+			Label:     label,
+			Payload:   payload,
+			Notes:     notes,
+			Kind:      kind,
+		})
+	}
+
+	if ws.ListFPs {
+		for _, fp := range webgo.ListSSTIFingerprints() {
+			send("fingerprint", string(fp.Engine), fp.Language, fp.Payload, "expect: "+fp.Expected)
+		}
+		send("done", "", "", "", "")
+		return
+	}
+
+	cmd := ws.Cmd
+	if cmd == "" {
+		cmd = "id"
+	}
+
+	var engines []webgo.SSTIEngine
+	if ws.Engine != "" {
+		engines = []webgo.SSTIEngine{webgo.SSTIEngine(ws.Engine)}
+	} else {
+		engines = []webgo.SSTIEngine{
+			webgo.EngineJinja2, webgo.EngineTwig, webgo.EngineFreemarker,
+			webgo.EngineVelocity, webgo.EngineSmarty, webgo.EngineMako,
+			webgo.EnginePebble, webgo.EngineERB, webgo.EngineTornado,
+		}
+	}
+
+	for _, e := range engines {
+		for _, p := range webgo.ListSSTIForEngine(e) {
+			send("payload", string(e), p.Label, webgo.RenderSSTIPayload(p, cmd), p.Notes)
+		}
+	}
+	send("done", "", "", "", "")
 }
