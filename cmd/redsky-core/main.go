@@ -223,6 +223,10 @@ func main() {
 	webReqBody := flag.String("webreq-body", "", "request body (string)")
 	webReqTimeout := flag.Int("webreq-timeout", 15, "timeout (seconds)")
 	webReqSkipTLS := flag.Bool("webreq-skip-tls", true, "skip TLS verification")
+	workflowSteps := flag.String("workflow", "", "run recon workflow: comma-separated steps (or 'default')")
+	workflowDry := flag.Bool("workflow-dry", false, "preview steps without executing")
+	workflowCSInt := flag.String("workflow-csint-root", "", "directory to index (csint step)")
+	workflowTitle := flag.String("workflow-report-title", "", "title for the final report step")
 	pmkidIface := flag.String("pmkid", "", "802.11 PMKID harvest: monitor-mode iface")
 	pmkidChannel := flag.Int("pmkid-channel", 0, "PMKID: set wifi channel before harvest")
 	pmkidDuration := flag.Duration("pmkid-duration", 60*time.Second, "PMKID: total harvest run time")
@@ -773,6 +777,25 @@ func main() {
 			Body:    *webReqBody,
 			Timeout: *webReqTimeout,
 			SkipTLS: *webReqSkipTLS,
+		})
+	}
+
+	// workflow dispatch — recon reducer on the first agent
+	if *workflowSteps != "" {
+		var steps []string
+		if *workflowSteps != "default" {
+			for _, s := range strings.Split(*workflowSteps, ",") {
+				s = strings.TrimSpace(s)
+				if s != "" {
+					steps = append(steps, s)
+				}
+			}
+		}
+		go runWorkflowDispatch(mgr, workflowArgs{
+			Steps:       steps,
+			DryRun:      *workflowDry,
+			CSIntRoot:   *workflowCSInt,
+			ReportTitle: *workflowTitle,
 		})
 	}
 
@@ -1979,5 +2002,33 @@ func runWebReqDispatch(mgr *session.Manager, a webReqArgs) {
 	}
 	if err := s.SendWebReqStart(sessionID, req); err != nil {
 		log.Printf("[webreq] start: %v", err)
+	}
+}
+
+// workflowArgs carries the operator's -workflow* flags.
+type workflowArgs struct {
+	Steps       []string
+	DryRun      bool
+	CSIntRoot   string
+	ReportTitle string
+}
+
+// runWorkflowDispatch waits for the first agent, sends a WorkflowStart.
+func runWorkflowDispatch(mgr *session.Manager, a workflowArgs) {
+	for len(mgr.Sessions()) == 0 {
+		time.Sleep(500 * time.Millisecond)
+	}
+	s := mgr.Sessions()[0]
+	sessionID := fmt.Sprintf("wf-%d", time.Now().UnixNano())
+	log.Printf("[workflow] %d steps dry=%v -> %s", len(a.Steps), a.DryRun, s.AgentID)
+	req := proto.WorkflowStart{
+		SessionID:   sessionID,
+		Steps:       a.Steps,
+		DryRun:      a.DryRun,
+		CSIntRoot:   a.CSIntRoot,
+		ReportTitle: a.ReportTitle,
+	}
+	if err := s.SendWorkflowStart(sessionID, req); err != nil {
+		log.Printf("[workflow] start: %v", err)
 	}
 }

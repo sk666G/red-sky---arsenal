@@ -390,6 +390,12 @@ func runSession(host string, port int, agentID, caFP string, beaconSec int) erro
 				continue
 			}
 			go runWebReq(conn, sess, w)
+		case proto.TypeWorkflowStart:
+			var w proto.WorkflowStart
+			if err := json.Unmarshal(env.Payload, &w); err != nil {
+				continue
+			}
+			go runWorkflow(conn, sess, w)
 		case proto.TypeWirelessStop:
 			var ws proto.WirelessStop
 			if err := json.Unmarshal(env.Payload, &ws); err != nil {
@@ -2800,5 +2806,33 @@ func runWebReq(conn net.Conn, sess *crypto.Session, w proto.WebReqStart) {
 		DurationMs: r.DurationMs,
 		Error:      r.Error,
 		Done:       true,
+	})
+}
+
+// runWorkflow drives the recon workflow reducer, streaming per-step results.
+func runWorkflow(conn net.Conn, sess *crypto.Session, w proto.WorkflowStart) {
+	opts := recon2.WorkflowOptions{
+		DryRun:         w.DryRun,
+		CSIntRoot:      w.CSIntRoot,
+		ReportTitle:    w.ReportTitle,
+		ReportOperator: w.ReportOp,
+	}
+	for _, s := range w.Steps {
+		opts.Steps = append(opts.Steps, recon2.WorkflowStep(s))
+	}
+	results := recon2.RunWorkflow(opts)
+	for _, r := range results {
+		sendTunnelAck(conn, sess, proto.TypeWorkflowData, proto.WorkflowData{
+			SessionID: w.SessionID,
+			Step:      string(r.Step),
+			OK:        r.OK,
+			Summary:   r.Summary,
+			Error:     r.Error,
+			ElapsedMs: r.Elapsed.Milliseconds(),
+		})
+	}
+	sendTunnelAck(conn, sess, proto.TypeWorkflowData, proto.WorkflowData{
+		SessionID: w.SessionID,
+		Done:      true,
 	})
 }

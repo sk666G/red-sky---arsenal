@@ -92,6 +92,8 @@ const (
 	TypeReportData      MessageType = "report_data"
 	TypeWebReqStart     MessageType = "webreq_start"
 	TypeWebReqData      MessageType = "webreq_data"
+	TypeWorkflowStart   MessageType = "workflow_start"
+	TypeWorkflowData    MessageType = "workflow_data"
 	TypeWirelessStop    MessageType = "wireless_stop"
 	TypeWirelessData    MessageType = "wireless_data"
 	TypeWirelessDone    MessageType = "wireless_done"
@@ -926,4 +928,25 @@ type WebReqData struct {
 	DurationMs int64             `json:"duration_ms,omitempty"`
 	Error      string            `json:"error,omitempty"`
 	Done       bool              `json:"done"`
+}
+
+// WorkflowStart drives the recon workflow reducer on the agent.
+type WorkflowStart struct {
+	SessionID   string   `json:"session_id"`
+	Steps       []string `json:"steps,omitempty"`
+	DryRun      bool     `json:"dry_run,omitempty"`
+	CSIntRoot   string   `json:"csint_root,omitempty"`
+	ReportTitle string   `json:"report_title,omitempty"`
+	ReportOp    string   `json:"report_operator,omitempty"`
+}
+
+// WorkflowData streams per-step results.
+type WorkflowData struct {
+	SessionID string `json:"session_id"`
+	Step      string `json:"step"`
+	OK        bool   `json:"ok"`
+	Summary   string `json:"summary,omitempty"`
+	Error     string `json:"error,omitempty"`
+	ElapsedMs int64  `json:"elapsed_ms,omitempty"`
+	Done      bool   `json:"done"`
 }

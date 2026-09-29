@@ -671,3 +671,9 @@ func (s *Session) SendWebReqStart(sessionID string, req proto.WebReqStart) error
 	req.SessionID = sessionID
 	return s.sendTunnelMsg(proto.TypeWebReqStart, req)
 }
+
+// SendWorkflowStart drives the recon workflow reducer on the agent.
+func (s *Session) SendWorkflowStart(sessionID string, req proto.WorkflowStart) error {
+	req.SessionID = sessionID
+	return s.sendTunnelMsg(proto.TypeWorkflowStart, req)
+}
