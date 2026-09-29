@@ -141,6 +141,11 @@ func main() {
 	webSSTI := flag.String("webssti", "", "render SSTI payloads: pass engine (jinja2|twig|freemarker|velocity|smarty|mako|pebble|erb|tornado) or 'all'")
 	webSSTICmd := flag.String("webssti-cmd", "id", "command to embed in payloads")
 	webSSTIFPs := flag.Bool("webssti-fingerprints", false, "list fingerprint probes instead of payloads")
+	webXXE := flag.String("webxxe", "", "render XXE payloads for a kind: in-band|oob|ssrf|dos|all")
+	webXXEFile := flag.String("webxxe-file", "/etc/passwd", "file path for in-band payloads")
+	webXXEURL := flag.String("webxxe-url", "http://169.254.169.254/latest/meta-data/", "URL for SSRF payloads")
+	webXXEAttacker := flag.String("webxxe-attacker", "attacker.example", "attacker host for OOB callbacks")
+	webXXEDefaults := flag.Bool("webxxe-defaults", false, "sweep the default file + URL list")
 	pmkidIface := flag.String("pmkid", "", "802.11 PMKID harvest: monitor-mode iface")
 	pmkidChannel := flag.Int("pmkid-channel", 0, "PMKID: set wifi channel before harvest")
 	pmkidDuration := flag.Duration("pmkid-duration", 60*time.Second, "PMKID: total harvest run time")
@@ -479,6 +484,26 @@ func main() {
 			Engine:  *webSSTI,
 			Cmd:     *webSSTICmd,
 			ListFPs: *webSSTIFPs,
+		})
+	}
+
+	// webxxe dispatch — XXE payload rendering via the first agent
+	if *webXXE != "" || *webXXEDefaults {
+		go runWebXXEDispatch(mgr, webXXEArgs{
+			Kind:     *webXXE,
+			File:     *webXXEFile,
+			URL:      *webXXEURL,
+			Attacker: *webXXEAttacker,
+			Defaults: *webXXEDefaults,
+		})
+	}
+
+	// webxss dispatch — XSS payload rendering via the first agent
+	if *webXSS != "" || *webXSSFPs {
+		go runWebXSSDispatch(mgr, webXSSArgs{
+			Context: *webXSS,
+			JS:      *webXSSJS,
+			FPs:     *webXSSFPs,
 		})
 	}
 
@@ -1234,5 +1259,37 @@ func runWebXSSDispatch(mgr *session.Manager, a webXSSArgs) {
 	}
 	if err := s.SendWebXSSStart(sessionID, req); err != nil {
 		log.Printf("[webxss] start: %v", err)
+	}
+}
+
+// webXXEArgs carries the operator's -webxxe* flags.
+type webXXEArgs struct {
+	Kind     string
+	File     string
+	URL      string
+	Attacker string
+	Defaults bool
+}
+
+// runWebXXEDispatch waits for the first agent, fires a WebXXEStart.
+func runWebXXEDispatch(mgr *session.Manager, a webXXEArgs) {
+	for len(mgr.Sessions()) == 0 {
+		time.Sleep(500 * time.Millisecond)
+	}
+	s := mgr.Sessions()[0]
+	sessionID := fmt.Sprintf("xx-%d", time.Now().UnixNano())
+
+	log.Printf("[webxxe] kind=%q defaults=%v -> %s", a.Kind, a.Defaults, s.AgentID)
+
+	req := proto.WebXXEStart{
+		SessionID: sessionID,
+		Kind:      a.Kind,
+		File:      a.File,
+		URL:       a.URL,
+		Attacker:  a.Attacker,
+		Defaults:  a.Defaults,
+	}
+	if err := s.SendWebXXEStart(sessionID, req); err != nil {
+		log.Printf("[webxxe] start: %v", err)
 	}
 }
