@@ -2336,6 +2336,45 @@ func runBluetooth(conn net.Conn, sess *crypto.Session, b proto.BluetoothStart) {
 			Paired:  d.Paired,
 			Trusted: d.Trusted,
 		})
+	case "gatt_read":
+		if b.Address == "" || b.GATTUUID == "" {
+			send(proto.BluetoothData{Error: "address and gatt_uuid required", Done: true})
+			return
+		}
+		res, err := rfgo.ReadValue(ctx, b.Address, b.GATTUUID, opts)
+		if err != nil {
+			send(proto.BluetoothData{Address: b.Address, Error: err.Error(), Done: true})
+			return
+		}
+		send(proto.BluetoothData{
+			Address: b.Address,
+			GATTHex: res.Hex,
+		})
+
+	case "gatt_write":
+		if b.Address == "" || b.GATTUUID == "" || b.HexData == "" {
+			send(proto.BluetoothData{Error: "address, gatt_uuid, hex_data required", Done: true})
+			return
+		}
+		if err := rfgo.WriteValue(ctx, b.Address, b.GATTUUID, b.HexData, opts); err != nil {
+			send(proto.BluetoothData{Address: b.Address, Error: err.Error(), Done: true})
+			return
+		}
+		send(proto.BluetoothData{Address: b.Address, Notifies: []string{"write ok"}})
+
+	case "gatt_notify":
+		if b.Address == "" || b.GATTUUID == "" {
+			send(proto.BluetoothData{Error: "address and gatt_uuid required", Done: true})
+			return
+		}
+		listen := time.Duration(b.Listen) * time.Second
+		lines, err := rfgo.NotifyOn(ctx, b.Address, b.GATTUUID, listen, opts)
+		if err != nil {
+			send(proto.BluetoothData{Address: b.Address, Error: err.Error(), Done: true})
+			return
+		}
+		send(proto.BluetoothData{Address: b.Address, Notifies: lines})
+
 	case "gatt":
 		if b.Address == "" {
 			send(proto.BluetoothData{Error: "address required", Done: true})

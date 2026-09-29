@@ -770,6 +770,10 @@ type BluetoothStart struct {
 	Action    string `json:"action"` // scan|info
 	Address   string `json:"address,omitempty"`
 	Duration  int    `json:"duration,omitempty"` // seconds
+	// GATT operations
+	GATTUUID string `json:"gatt_uuid,omitempty"`
+	HexData  string `json:"hex_data,omitempty"`
+	Listen   int    `json:"listen,omitempty"` // seconds for notify
 }
 
 // BluetoothData streams one device per message.
@@ -785,4 +789,6 @@ type BluetoothData struct {
 	// GATT enumeration
 	Services []string `json:"services,omitempty"` // formatted "handle|uuid|name"
 	Chars    []string `json:"chars,omitempty"`    // formatted "service_uuid|handle|uuid|flags"
+	GATTHex  string   `json:"gatt_hex,omitempty"`
+	Notifies []string `json:"notifies,omitempty"`
 }
