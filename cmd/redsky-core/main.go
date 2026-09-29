@@ -200,6 +200,9 @@ func main() {
 	droneTargetComp := flag.Uint("drone-target-comp", 1, "target component id")
 	droneCommand := flag.Uint("drone-command", 0, "MAV_CMD id")
 	droneListen := flag.Int("drone-listen", 10, "listen duration (seconds)")
+	droneLat := flag.Float64("drone-lat", 0, "goto latitude")
+	droneLon := flag.Float64("drone-lon", 0, "goto longitude")
+	droneAlt := flag.Float64("drone-alt", 0, "goto altitude (meters)")
 	pmkidIface := flag.String("pmkid", "", "802.11 PMKID harvest: monitor-mode iface")
 	pmkidChannel := flag.Int("pmkid-channel", 0, "PMKID: set wifi channel before harvest")
 	pmkidDuration := flag.Duration("pmkid-duration", 60*time.Second, "PMKID: total harvest run time")
@@ -701,6 +704,9 @@ func main() {
 			TargetComp: uint16(*droneTargetComp),
 			Command:    uint16(*droneCommand),
 			Listen:     *droneListen,
+			Lat:        float32(*droneLat),
+			Lon:        float32(*droneLon),
+			Alt:        float32(*droneAlt),
 		})
 	}
 
@@ -1776,6 +1782,9 @@ type droneArgs struct {
 	TargetComp uint16
 	Command    uint16
 	Listen     int
+	Lat        float32
+	Lon        float32
+	Alt        float32
 }
 
 // runDroneDispatch waits for the first agent, sends a DroneStart.
@@ -1797,6 +1806,9 @@ func runDroneDispatch(mgr *session.Manager, a droneArgs) {
 		TargetComp:     a.TargetComp,
 		Command:        a.Command,
 		ListenDuration: a.Listen,
+		Lat:            a.Lat,
+		Lon:            a.Lon,
+		Alt:            a.Alt,
 	}
 	if err := s.SendDroneStart(sessionID, req); err != nil {
 		log.Printf("[drone] start: %v", err)

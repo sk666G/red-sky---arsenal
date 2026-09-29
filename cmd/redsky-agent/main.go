@@ -2490,6 +2490,27 @@ func runDrone(conn net.Conn, sess *crypto.Session, d proto.DroneStart) {
 		}
 		send(proto.DroneData{Message: "mode set"})
 
+	case "goto":
+		mask := uint16(0x0FF8) // position + velocity + accel + yaw
+		f, err := drone.SetPositionTargetGlobalInt(
+			d.SysID, d.CompID, seq,
+			uint8(d.TargetSys), uint8(d.TargetComp),
+			d.Lat, d.Lon, d.Alt,
+			d.Vx, d.Vy, d.Vz,
+			0, 0, 0, // accel zeros
+			0, 0, // yaw + yaw rate zeros
+			mask,
+		)
+		if err != nil {
+			send(proto.DroneData{Error: err.Error(), Done: true})
+			return
+		}
+		if err := drone.SendUDP(opts, f); err != nil {
+			send(proto.DroneData{Error: err.Error(), Done: true})
+			return
+		}
+		send(proto.DroneData{Message: "goto sent"})
+
 	case "manual":
 		f, err := drone.ManualControl(d.SysID, d.CompID, seq, uint8(d.TargetSys), d.ManualX, d.ManualY, d.ManualZ, d.ManualR, d.Buttons)
 		if err != nil {
