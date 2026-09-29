@@ -64,6 +64,8 @@ const (
 	TypeWebXXEData    MessageType = "webxxe_data"
 	TypeWebXSSStart   MessageType = "webxss_start"
 	TypeWebXSSData    MessageType = "webxss_data"
+	TypeAdEnumStart   MessageType = "adenum_start"
+	TypeAdEnumData    MessageType = "adenum_data"
 	TypeWirelessStop  MessageType = "wireless_stop"
 	TypeWirelessData  MessageType = "wireless_data"
 	TypeWirelessDone  MessageType = "wireless_done"
@@ -562,4 +564,28 @@ type WebXSSData struct {
 	Notes     string `json:"notes,omitempty"`
 	Kind      string `json:"kind"` // payload | fingerprint | done
 	Done      bool   `json:"done"`
+}
+
+// AdEnumStart drives an Active Directory enumeration via LDAP on the agent.
+type AdEnumStart struct {
+	SessionID string `json:"session_id"`
+	Action    string `json:"action"` // rootdse|domain|users|groups|computers|gpos|trusts|
+	// asrep|kerberoast|unconstrained|pwdnotreq|laps|adcs|dacl
+	Host   string `json:"host"` // DC ip/hostname
+	Port   int    `json:"port"` // 389 or 636
+	UseTLS bool   `json:"use_tls"`
+	BindDN string `json:"bind_dn,omitempty"`
+	BindPW string `json:"bind_pw,omitempty"`
+	BaseDN string `json:"base_dn,omitempty"` // auto-discover via RootDSE if empty
+}
+
+// AdEnumData streams one LDAP entry per message, plus done / error markers.
+type AdEnumData struct {
+	SessionID string              `json:"session_id"`
+	Action    string              `json:"action"`
+	DN        string              `json:"dn,omitempty"`
+	Attrs     map[string][]string `json:"attrs,omitempty"`
+	Message   string              `json:"message,omitempty"`
+	OK        bool                `json:"ok"`
+	Done      bool                `json:"done"`
 }

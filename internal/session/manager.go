@@ -587,3 +587,9 @@ func (s *Session) SendWebXSSStart(sessionID string, req proto.WebXSSStart) error
 	req.SessionID = sessionID
 	return s.sendTunnelMsg(proto.TypeWebXSSStart, req)
 }
+
+// SendAdEnumStart kicks off an AD enumeration on the agent.
+func (s *Session) SendAdEnumStart(sessionID string, req proto.AdEnumStart) error {
+	req.SessionID = sessionID
+	return s.sendTunnelMsg(proto.TypeAdEnumStart, req)
+}

