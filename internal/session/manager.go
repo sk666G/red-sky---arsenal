@@ -287,6 +287,23 @@ func (m *Manager) readerLoop(s *Session) {
 			if err := json.Unmarshal(env.Payload, &c); err == nil {
 				s.RouteCaptureData(c.SessionID, c.Data)
 			}
+		case proto.TypeWirelessData:
+			var w proto.WirelessData
+			if err := json.Unmarshal(env.Payload, &w); err == nil {
+				s.RouteCaptureData(w.SessionID, w.Data)
+			}
+		case proto.TypeWirelessDone:
+			var w proto.WirelessDone
+			if err := json.Unmarshal(env.Payload, &w); err == nil {
+				m.emit("wireless", s.AgentID, "done "+w.SessionID)
+				s.UnregisterCaptureChannel(w.SessionID)
+			}
+		case proto.TypeWirelessFail:
+			var w proto.WirelessFail
+			if err := json.Unmarshal(env.Payload, &w); err == nil {
+				m.emit("error", s.AgentID, "wireless "+w.SessionID+": "+w.Error)
+				s.UnregisterCaptureChannel(w.SessionID)
+			}
 		case proto.TypeCaptureDone:
 			var c proto.CaptureDone
 			if err := json.Unmarshal(env.Payload, &c); err == nil {
@@ -467,4 +484,19 @@ func (s *Session) RouteCaptureData(sessionID string, data []byte) {
 	default:
 		// drop on backpressure
 	}
+}
+
+
+// SendWirelessStart tells the agent to begin an 802.11 capture.
+func (s *Session) SendWirelessStart(sessionID, iface string, channel int) error {
+	return s.sendTunnelMsg(proto.TypeWirelessStart, proto.WirelessStart{
+		SessionID: sessionID,
+		Iface:     iface,
+		Channel:   channel,
+	})
+}
+
+// SendWirelessStop stops a wireless capture.
+func (s *Session) SendWirelessStop(sessionID string) error {
+	return s.sendTunnelMsg(proto.TypeWirelessStop, proto.WirelessStop{SessionID: sessionID})
 }

