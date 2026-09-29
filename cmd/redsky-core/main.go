@@ -69,6 +69,13 @@ func main() {
 	pmkidDuration := flag.Duration("pmkid-duration", 60*time.Second, "PMKID: total harvest run time")
 	pmkidBSSID := flag.String("pmkid-bssid", "", "PMKID: only emit hits for this BSSID")
 	pmkidOut := flag.String("pmkid-out", "", "PMKID: write hashcat lines to this file (append)")
+	evilSSID := flag.String("evil-ssid", "", "evil twin: SSID to spoof")
+	evilBSSID := flag.String("evil-bssid", "", "evil twin: BSSID to spoof (required)")
+	evilIface := flag.String("evil-iface", "", "evil twin: monitor-mode iface (required)")
+	evilChannel := flag.Int("evil-channel", 6, "evil twin: operating channel")
+	evilBeacon := flag.Duration("evil-beacon", 100*time.Millisecond, "evil twin: beacon interval")
+	evilDuration := flag.Duration("evil-duration", 60*time.Second, "evil twin: total run time")
+	evilOut := flag.String("evil-out", "", "evil twin: append probe hits to this file")
 	flag.Parse()
 
 	if *pluginFlag != "" {
@@ -175,6 +182,45 @@ func main() {
 			log.Printf("[pmkid] %v", err)
 		}
 		pcancel()
+	}
+
+	// evil_twin dispatch — rogue AP beacons + probe harvest
+	if *evilSSID != "" {
+		if *evilIface == "" || *evilBSSID == "" {
+			log.Printf("[evil_twin] -evil-iface and -evil-bssid required")
+		} else {
+			var probeFile *os.File
+			if *evilOut != "" {
+				f, err := os.OpenFile(*evilOut, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+				if err != nil {
+					log.Printf("[evil_twin] open %s: %v", *evilOut, err)
+				} else {
+					probeFile = f
+					defer probeFile.Close()
+				}
+			}
+			ectx, ecancel := context.WithTimeout(context.Background(), *evilDuration)
+			onProbe := func(h wireless.ProbeHit) {
+				line := fmt.Sprintf("%s client=%s ssid=%q rssi=%d",
+					h.TS.Format("15:04:05"), h.Client, h.SSID, h.RSSIsign)
+				log.Printf("[evil_twin] probe %s", line)
+				if probeFile != nil {
+					fmt.Fprintln(probeFile, line)
+					probeFile.Sync()
+				}
+			}
+			if err := wireless.EvilTwin(ectx, wireless.EvilTwinOptions{
+				Iface:       *evilIface,
+				SSID:        *evilSSID,
+				BSSID:       *evilBSSID,
+				Channel:     *evilChannel,
+				BeaconEvery: *evilBeacon,
+				Duration:    *evilDuration,
+			}, onProbe); err != nil {
+				log.Printf("[evil_twin] %v", err)
+			}
+			ecancel()
+		}
 	}
 
 	if *dnsBind != "" {
