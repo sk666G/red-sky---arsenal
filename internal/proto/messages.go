@@ -70,6 +70,8 @@ const (
 	TypeShellcodeData  MessageType = "shellcode_data"
 	TypeHostInfoStart  MessageType = "hostinfo_start"
 	TypeHostInfoData   MessageType = "hostinfo_data"
+	TypeVMDetectStart  MessageType = "vmdetect_start"
+	TypeVMDetectData   MessageType = "vmdetect_data"
 	TypeWirelessStop   MessageType = "wireless_stop"
 	TypeWirelessData   MessageType = "wireless_data"
 	TypeWirelessDone   MessageType = "wireless_done"
