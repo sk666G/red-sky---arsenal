@@ -1352,7 +1352,20 @@ func runIcsBACnet(ctx context.Context, ic proto.IcsStart, send func(string, stri
 			send("read", "bacnet read error", err.Error(), false, false)
 			return
 		}
-		send("read", "read response", fmt.Sprintf("%x", raw), true, false)
+		// try to decode the ComplexACK payload
+		if len(raw) > 6 {
+			// strip BVLC(4) + NPDU(2) to get to the APDU
+			apdu := raw[6:]
+			if dec, err := icsgo.DecodeReadPropertyACK(apdu); err == nil {
+				val := icsgo.BACnetFormatValue(dec.Value)
+				det := fmt.Sprintf("obj=%s prop=%d type=%s value=%s",
+					dec.ObjectID.String(), dec.PropertyID, dec.Value.Type, val)
+				send("read", "decoded", det, true, false)
+				send("read", "raw", fmt.Sprintf("%x", raw), true, false)
+				return
+			}
+		}
+		send("read", "read response (undecoded)", fmt.Sprintf("%x", raw), true, false)
 	case "write":
 		// RawValue carries the pre-encoded application tag + value
 		addr := ic.Host
