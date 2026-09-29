@@ -611,3 +611,9 @@ func (s *Session) SendVMDetectStart(sessionID string, req proto.VMDetectStart) e
 	req.SessionID = sessionID
 	return s.sendTunnelMsg(proto.TypeVMDetectStart, req)
 }
+
+// SendAntiForenStart asks the agent to run anti-forensics primitives.
+func (s *Session) SendAntiForenStart(sessionID string, req proto.AntiForenStart) error {
+	req.SessionID = sessionID
+	return s.sendTunnelMsg(proto.TypeAntiForenStart, req)
+}

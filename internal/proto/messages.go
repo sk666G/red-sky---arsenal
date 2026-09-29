@@ -72,6 +72,8 @@ const (
 	TypeHostInfoData   MessageType = "hostinfo_data"
 	TypeVMDetectStart  MessageType = "vmdetect_start"
 	TypeVMDetectData   MessageType = "vmdetect_data"
+	TypeAntiForenStart MessageType = "antiforen_start"
+	TypeAntiForenData  MessageType = "antiforen_data"
 	TypeWirelessStop   MessageType = "wireless_stop"
 	TypeWirelessData   MessageType = "wireless_data"
 	TypeWirelessDone   MessageType = "wireless_done"
@@ -656,6 +658,22 @@ type VMDetectStart struct {
 type VMDetectData struct {
 	SessionID string   `json:"session_id"`
 	Signals   []string `json:"signals,omitempty"` // formatted "check|signal|evidence"
+	Count     int      `json:"count"`
+	Done      bool     `json:"done"`
+}
+
+// AntiForenStart asks the agent to run anti-forensics primitives.
+type AntiForenStart struct {
+	SessionID string   `json:"session_id"`
+	Action    string   `json:"action"` // logstop|history|secure_delete|timestamp|all
+	Paths     []string `json:"paths,omitempty"`
+	DryRun    bool     `json:"dry_run,omitempty"`
+}
+
+// AntiForenData streams the results back.
+type AntiForenData struct {
+	SessionID string   `json:"session_id"`
+	Results   []string `json:"results,omitempty"` // formatted "action|target|ok|detail"
 	Count     int      `json:"count"`
 	Done      bool     `json:"done"`
 }
