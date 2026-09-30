@@ -159,6 +159,13 @@ type V2Frame struct {
 
 // ParseV2 decodes a MAVLink v2 frame from the byte stream. Returns an error
 // if the frame is malformed or the CRC fails.
+// ParseV2 decodes a MAVLink v2 frame.
+//
+// Handles truncated payloads: the LEN field on the wire carries the
+// declared payload length, but the wire may carry fewer trailing bytes
+// (the truncated-payload feature of v2 — see mavlink_v2_truncate.go).
+// The actual wire payload length is derived from the total frame size,
+// and the CRC covers only the bytes actually transmitted.
 func ParseV2(b []byte) (V2Frame, error) {
 	var f V2Frame
 	if len(b) < MavlinkV2HeaderSize+2 {
@@ -176,30 +183,44 @@ func ParseV2(b []byte) (V2Frame, error) {
 	f.MsgID = uint32(b[7]) | uint32(b[8])<<8 | uint32(b[9])<<16
 	f.Signed = f.IncompatFlag&V2FlagSigned != 0
 
-	need := MavlinkV2HeaderSize + int(f.Len) + 2
+	// derive the actual wire payload length from the total frame size.
+	// layout: header(10) | payload(N) | CRC(2) | signature(13 if signed)
+	trailer := 2
 	if f.Signed {
-		need += MavlinkV2SigSize
+		trailer += MavlinkV2SigSize
 	}
-	if len(b) < need {
-		return f, fmt.Errorf("drone: v2 frame too short (need %d, have %d)", need, len(b))
+	if len(b) < MavlinkV2HeaderSize+trailer {
+		return f, fmt.Errorf("drone: v2 frame too short for trailer")
 	}
-	f.Payload = append([]byte(nil), b[MavlinkV2HeaderSize:MavlinkV2HeaderSize+int(f.Len)]...)
+	wireLen := len(b) - MavlinkV2HeaderSize - trailer
+	if wireLen < 0 {
+		return f, errors.New("drone: negative payload length")
+	}
+	if wireLen > int(f.Len) {
+		return f, fmt.Errorf("drone: wire payload %d > declared %d", wireLen, f.Len)
+	}
 
-	// CRC verify
+	// reconstruct full payload with zero padding for the truncated tail
+	f.Payload = make([]byte, f.Len)
+	copy(f.Payload, b[MavlinkV2HeaderSize:MavlinkV2HeaderSize+wireLen])
+
+	// CRC verify — covers the wire bytes only (header from LEN onward +
+	// the wire payload + CRC_EXTRA)
 	var extra uint8
 	if f.MsgID <= 255 {
 		if e, ok := crcExtraTable[uint8(f.MsgID)]; ok {
 			extra = e
 		}
 	}
-	gotCRC := binary.LittleEndian.Uint16(b[MavlinkV2HeaderSize+int(f.Len) : MavlinkV2HeaderSize+int(f.Len)+2])
-	wantCRC := crcX25(b[1:MavlinkV2HeaderSize+int(f.Len)], extra)
+	crcOff := MavlinkV2HeaderSize + wireLen
+	gotCRC := binary.LittleEndian.Uint16(b[crcOff : crcOff+2])
+	wantCRC := crcX25(b[1:crcOff], extra)
 	if gotCRC != wantCRC {
 		return f, fmt.Errorf("drone: v2 CRC mismatch (got %04x, want %04x)", gotCRC, wantCRC)
 	}
 
 	if f.Signed {
-		sigOff := MavlinkV2HeaderSize + int(f.Len) + 2
+		sigOff := crcOff + 2
 		f.LinkID = b[sigOff]
 		f.Signature = append([]byte(nil), b[sigOff:sigOff+MavlinkV2SigSize]...)
 	}
