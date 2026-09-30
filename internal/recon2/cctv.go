@@ -93,7 +93,7 @@ type CCTVOptions struct {
 type RTSPResult struct {
 	URL       string `json:"url"`
 	OK        bool   `json:"ok"`
-	Status    int    `json:"status"`     // HTTP-style code
+	Status    int    `json:"status"` // HTTP-style code
 	Server    string `json:"server,omitempty"`
 	AuthRealm string `json:"auth_realm,omitempty"`
 	Note      string `json:"note,omitempty"`
@@ -203,7 +203,30 @@ func ProbeRTSP(ctx context.Context, rtspURL string, creds *CCTVCred, opts CCTVOp
 		res.Note = "auth required, no creds supplied"
 		return res
 	}
-	code, head, err = rtspRequest(ctx, rtspURL, "DESCRIBE", 2, creds, opts.Timeout)
+
+	// prefer Basic if the challenge asked for it; try Digest if the
+	// challenge was a Digest form. Some cameras accept either.
+	challengeLower := strings.ToLower(res.AuthRealm)
+	useDigest := strings.Contains(challengeLower, "digest")
+
+	if useDigest {
+		ch, ok := ParseDigestChallenge(res.AuthRealm)
+		if !ok {
+			res.Note = "digest challenge unparseable"
+			return res
+		}
+		// compute the Authorization header for the DESCRIBE request
+		cnonce := FakeCnonce(uint32(0xDEADBEEF))
+		uri := "/"
+		if u, err := url.Parse(rtspURL); err == nil && u.RequestURI() != "" {
+			uri = u.RequestURI()
+		}
+		auth := BuildDigestAuthorization(creds.User, creds.Pass, "DESCRIBE", uri, ch, cnonce, "00000001")
+		code, head, err = rtspRequestDigest(ctx, rtspURL, "DESCRIBE", 2, auth, opts.Timeout)
+	} else {
+		code, head, err = rtspRequest(ctx, rtspURL, "DESCRIBE", 2, creds, opts.Timeout)
+	}
+
 	if err != nil {
 		res.Note = err.Error()
 		return res
@@ -217,11 +240,73 @@ func ProbeRTSP(ctx context.Context, rtspURL string, creds *CCTVCred, opts CCTVOp
 	}
 	if code == 200 {
 		res.OK = true
-		res.Note = "authenticated with " + creds.User + ":" + creds.Pass
+		authKind := "basic"
+		if useDigest {
+			authKind = "digest"
+		}
+		res.Note = "authenticated (" + authKind + ") with " + creds.User + ":" + creds.Pass
 	} else {
 		res.Note = fmt.Sprintf("describe returned %d", code)
 	}
 	return res
+}
+
+// rtspRequestDigest is like rtspRequest but takes a pre-computed
+// Authorization header (typically the value produced by
+// BuildDigestAuthorization).
+func rtspRequestDigest(ctx context.Context, rtspURL, method string, cseq int, authHeader string, timeout time.Duration) (int, string, error) {
+	u, err := url.Parse(rtspURL)
+	if err != nil {
+		return 0, "", err
+	}
+	host := u.Host
+	if !strings.Contains(host, ":") {
+		host += ":554"
+	}
+	d := net.Dialer{Timeout: timeout}
+	conn, err := d.DialContext(ctx, "tcp", host)
+	if err != nil {
+		return 0, "", err
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(timeout))
+
+	var req strings.Builder
+	req.WriteString(method + " " + u.RequestURI() + " RTSP/1.0\r\n")
+	req.WriteString("CSeq: " + strconv.Itoa(cseq) + "\r\n")
+	req.WriteString("User-Agent: redsky-recon\r\n")
+	req.WriteString("Authorization: " + authHeader + "\r\n")
+	req.WriteString("\r\n")
+
+	if _, err := conn.Write([]byte(req.String())); err != nil {
+		return 0, "", err
+	}
+	br := bufio.NewReader(conn)
+	head := strings.Builder{}
+	for {
+		line, err := br.ReadString('\n')
+		if err != nil {
+			break
+		}
+		head.WriteString(line)
+		if line == "\r\n" || line == "\n" {
+			break
+		}
+	}
+	resp := head.String()
+	lines := strings.Split(resp, "\r\n")
+	if len(lines) == 0 {
+		return 0, resp, errors.New("empty response")
+	}
+	parts := strings.SplitN(lines[0], " ", 3)
+	if len(parts) < 2 {
+		return 0, resp, errors.New("bad status line")
+	}
+	code, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return 0, resp, err
+	}
+	return code, resp, nil
 }
 
 // ProbeCamera finds a working RTSP URL on a host. Walks RTSPPaths and
