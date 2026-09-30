@@ -34,16 +34,16 @@ const (
 
 // DNP3 link control bytes
 const (
-	DNP3LinkReset         = 0x40
-	DNP3LinkUserDataUnc   = 0x44
+	DNP3LinkReset       = 0x40
+	DNP3LinkUserDataUnc = 0x44
 )
 
 // DNP3Options controls a session.
 type DNP3Options struct {
 	Host    string
-	Port    int           // 20000 default
-	Dest    uint16        // outstation address (typically 1-10)
-	Src     uint16        // master address (typically 1-100)
+	Port    int    // 20000 default
+	Dest    uint16 // outstation address (typically 1-10)
+	Src     uint16 // master address (typically 1-100)
 	Timeout time.Duration
 }
 
@@ -56,7 +56,7 @@ type DNP3Conn struct {
 
 // DNP3IIN decodes the Internal Indication word from a response.
 type DNP3IIN struct {
-	Raw uint16
+	Raw            uint16
 	AllStations    bool
 	Class1Events   bool
 	Class2Events   bool
@@ -190,12 +190,21 @@ func dnp3Link(dest, src uint16, control byte, payload []byte) []byte {
 }
 
 // parseDNP3Link strips CRCs, returns payload and control byte.
+//
+// The LEN field on the wire covers the bytes from CONTROL to the end of
+// user data (including the user-data CRCs). So user bytes = LEN - 5
+// (control + dest(2) + src(2)). The header before user data is 10 bytes:
+// start(2) + len(1) + control(1) + dest(2) + src(2) + headerCRC(2).
 func parseDNP3Link(data []byte) (payload []byte, control byte, err error) {
 	if len(data) < 10 || data[0] != 0x05 || data[1] != 0x64 {
 		return nil, 0, errors.New("icsgo/dnp3: bad link start")
 	}
 	length := int(data[2])
-	if len(data) < length+2 {
+	if length < 5 {
+		return nil, 0, errors.New("icsgo/dnp3: link length < 5")
+	}
+	userLen := length - 5
+	if len(data) < 10+userLen {
 		return nil, 0, errors.New("icsgo/dnp3: truncated link frame")
 	}
 	hdr := data[:8]
@@ -204,15 +213,26 @@ func parseDNP3Link(data []byte) (payload []byte, control byte, err error) {
 		return nil, 0, errors.New("icsgo/dnp3: header CRC mismatch")
 	}
 	control = data[3]
-	user := data[10 : length+2]
-	// strip the 16-byte-chunk CRCs from user data
+	user := data[10 : 10+userLen]
+	// strip the 16-byte-chunk CRCs from user data. Each chunk is 16 data
+	// bytes followed by a 2-byte CRC. The final chunk may be a partial
+	// chunk: its data portion is (remaining - 2), with the CRC being the
+	// last 2 bytes.
 	out := make([]byte, 0, len(user))
-	for i := 0; i < len(user); i += 18 {
-		end := i + 16
-		if end > len(user) {
-			end = len(user)
+	i := 0
+	for i < len(user) {
+		remain := len(user) - i
+		if remain >= 18 {
+			// full chunk: 16 data + 2 CRC
+			out = append(out, user[i:i+16]...)
+			i += 18
+		} else {
+			// partial: (remain - 2) data + 2 CRC
+			if remain >= 2 {
+				out = append(out, user[i:i+remain-2]...)
+			}
+			break
 		}
-		out = append(out, user[i:end]...)
 	}
 	return out, control, nil
 }
