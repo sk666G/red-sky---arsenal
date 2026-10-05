@@ -619,6 +619,11 @@ type AdEnumStart struct {
 	SPN         string `json:"spn,omitempty"`
 	PrimaryGID  uint32 `json:"primary_gid,omitempty"`
 	EncodedSD   string `json:"encoded_sd,omitempty"`
+	// AS-REP roast
+	RoastUser  string `json:"roast_user,omitempty"`
+	RoastRealm string `json:"roast_realm,omitempty"`
+	RoastDC    string `json:"roast_dc,omitempty"`
+	RoastPort  int    `json:"roast_port,omitempty"`
 }
 
 // AdEnumData streams one LDAP entry per message, plus done / error markers.

