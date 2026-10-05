@@ -146,20 +146,3 @@ func TestParseEncASRepPartSessionKeyShape(t *testing.T) {
 		t.Fatalf("session key mismatch:\n  got  %x\n  want %x", parsed.SessionKeyBytes, sessionKey)
 	}
 }
-
-// encryptRC4WithUsage is a test helper that mirrors EncryptTimestampRC4
-// but takes an arbitrary key usage.
-func encryptRC4WithUsage(ntHash, plaintext []byte, usage uint32) ([]byte, error) {
-	var usageBytes [4]byte
-	usageBytes[0] = byte(usage)
-	usageBytes[1] = byte(usage >> 8)
-	usageBytes[2] = byte(usage >> 16)
-	usageBytes[3] = byte(usage >> 24)
-	k1 := HMACMD5(ntHash, usageBytes[:])
-	checksum := HMACMD5(k1, plaintext)
-	k3 := HMACMD5(k1, checksum)
-	cipher := RC4Encrypt(k3, plaintext)
-	out := append([]byte{}, checksum...)
-	out = append(out, cipher...)
-	return out, nil
-}
