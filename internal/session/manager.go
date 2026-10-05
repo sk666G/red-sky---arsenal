@@ -86,8 +86,14 @@ func (s *Session) SendKind(kind, cmd string, args []string, timeout int) *Task {
 		return t
 	}
 	s.tasks[id] = t
+	select {
+	case s.write <- t:
+	default:
+		delete(s.tasks, id)
+		t.State = TaskFailed
+		t.Error = "session send buffer full"
+	}
 	s.mu.Unlock()
-	s.write <- t
 	return t
 }
 
@@ -198,6 +204,7 @@ func (s *Session) close() {
 		return
 	}
 	s.closed = true
+	close(s.write)
 	s.mu.Unlock()
 	_ = s.conn.Close()
 }
@@ -219,8 +226,11 @@ func (m *Manager) writerLoop(s *Session) {
 			m.emit("error", s.AgentID, "encrypt task: "+err.Error())
 			continue
 		}
-		if err := wire.WriteFrame(s.conn, wire.FlagEncrypted, enc); err != nil {
-			m.emit("error", s.AgentID, "send task: "+err.Error())
+		s.writeMu.Lock()
+		werr := wire.WriteFrame(s.conn, wire.FlagEncrypted, enc)
+		s.writeMu.Unlock()
+		if werr != nil {
+			m.emit("error", s.AgentID, "send task: "+werr.Error())
 			s.close()
 			return
 		}
@@ -412,10 +422,16 @@ func (s *Session) RouteTunnelInbound(tunnelID string, data []byte, eof bool) {
 		}
 	}
 	if eof {
-		close(ch)
 		s.mu.Lock()
-		delete(s.tunnels, tunnelID)
+		stillMine := false
+		if cur, ok := s.tunnels[tunnelID]; ok && cur == ch {
+			delete(s.tunnels, tunnelID)
+			stillMine = true
+		}
 		s.mu.Unlock()
+		if stillMine {
+			close(ch)
+		}
 	}
 }
 
@@ -431,11 +447,14 @@ func (s *Session) RegisterTunnel(tunnelID string) chan []byte {
 // UnregisterTunnel drops the local buffer.
 func (s *Session) UnregisterTunnel(tunnelID string) {
 	s.mu.Lock()
-	if ch, ok := s.tunnels[tunnelID]; ok {
-		close(ch)
+	ch, ok := s.tunnels[tunnelID]
+	if ok {
 		delete(s.tunnels, tunnelID)
 	}
 	s.mu.Unlock()
+	if ok {
+		close(ch)
+	}
 }
 
 // --- capture ---
@@ -459,11 +478,14 @@ func (s *Session) GetCaptureChannel(sessionID string) chan []byte {
 // UnregisterCaptureChannel drops the receive slot.
 func (s *Session) UnregisterCaptureChannel(sessionID string) {
 	s.mu.Lock()
-	if ch, ok := s.captures[sessionID]; ok {
-		close(ch)
+	ch, ok := s.captures[sessionID]
+	if ok {
 		delete(s.captures, sessionID)
 	}
 	s.mu.Unlock()
+	if ok {
+		close(ch)
+	}
 }
 
 // SendCaptureStart tells the agent to begin a capture.
