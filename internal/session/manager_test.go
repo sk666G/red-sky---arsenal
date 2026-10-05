@@ -54,15 +54,10 @@ func csFor() *crypto.Session { return &crypto.Session{} }
 
 // --- Invariant 1: duplicate Register does not leak the new session ---
 //
-// Current behavior (v3.2.0-alpha.83): Register calls old.close() which
-// closes old.conn. old's readerLoop then errors out and runs
-// `delete(m.sessions, s.AgentID)` — deleting the NEW session.
-// This test asserts the correct behavior: after duplicate Register,
-// the manager still holds a live entry for agentID, and that entry is
-// the new one. The current code FAILS this test — see TODO below.
+// Fixed in v3.2.0-alpha.84.1: readerLoop reaps by session identity, not
+// by agentID, so a duplicate Register cannot be undone by the old
+// session's tear-down path.
 func TestRegisterDuplicateKeepsNewSession(t *testing.T) {
-	t.Skip("TODO: fix in pass 2 — readerLoop deletes by agentID, not by session identity")
-
 	m := NewManager()
 	defer close(m.Events)
 
@@ -128,8 +123,6 @@ func TestSessionsSet(t *testing.T) {
 //
 // Same root cause as #1, tested directly on the reader path.
 func TestReaderLoopReapsOwnSessionOnly(t *testing.T) {
-	t.Skip("TODO: fix in pass 2 — delete(m.sessions, s.AgentID) races with re-register")
-
 	m := NewManager()
 	defer close(m.Events)
 
@@ -157,8 +150,6 @@ func TestReaderLoopReapsOwnSessionOnly(t *testing.T) {
 // so a full buffer blocks Send indefinitely. This test uses a short
 // timeout to fail fast.
 func TestSendAfterCloseDoesNotBlock(t *testing.T) {
-	t.Skip("TODO: fix in pass 2 — Send writes to s.write without a closed check")
-
 	m := NewManager()
 	defer close(m.Events)
 	conn := newFakeConn()

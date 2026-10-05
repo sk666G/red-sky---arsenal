@@ -79,6 +79,12 @@ func (s *Session) SendKind(kind, cmd string, args []string, timeout int) *Task {
 		Enqueued: time.Now(),
 	}
 	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		t.State = TaskFailed
+		t.Error = "session closed"
+		return t
+	}
 	s.tasks[id] = t
 	s.mu.Unlock()
 	s.write <- t
@@ -232,7 +238,13 @@ func (m *Manager) readerLoop(s *Session) {
 		if err != nil {
 			m.emit("disconnect", s.AgentID, "closed: "+err.Error())
 			m.mu.Lock()
-			delete(m.sessions, s.AgentID)
+			// Only reap the map entry if it still points at *this* session.
+			// A duplicate Register can have replaced the entry while this
+			// reader was blocked on the socket — deleting blindly would kill
+			// the replacement session.
+			if cur, ok := m.sessions[s.AgentID]; ok && cur == s {
+				delete(m.sessions, s.AgentID)
+			}
 			m.mu.Unlock()
 			return
 		}
