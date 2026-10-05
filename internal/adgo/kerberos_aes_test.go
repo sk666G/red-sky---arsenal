@@ -83,12 +83,21 @@ func TestAESWrongKeyFails(t *testing.T) {
 	}
 }
 
-// TestAESSmallPlaintextRejected — plaintext < one block.
-func TestAESSmallPlaintextRejected(t *testing.T) {
+// TestAESSmallPlaintextRoundTrips — the library prepends a 16-byte
+// confounder, so even sub-block plaintext is valid Kerberos AES input.
+func TestAESSmallPlaintextRoundTrips(t *testing.T) {
 	key, _ := DeriveAESKey("password", "REALMuser", 256)
-	_, err := AESEncrypt(key, []byte("short"), 3, ETypeAES256)
-	if err == nil {
-		t.Fatal("expected error for short plaintext")
+	plaintext := []byte("short")
+	cipher, err := AESEncrypt(key, plaintext, 3, ETypeAES256)
+	if err != nil {
+		t.Fatalf("short plaintext should round-trip via confounder, got: %v", err)
+	}
+	got, err := AESDecrypt(key, cipher, 3, ETypeAES256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, plaintext) {
+		t.Fatalf("short plaintext mismatch: got %x want %x", got, plaintext)
 	}
 }
 
@@ -122,7 +131,9 @@ func TestAESRFC3962VectorRoundTrip(t *testing.T) {
 		t.Fatalf("RFC vector round-trip mismatch:\n  got  %x\n  want %x", got, plaintext)
 	}
 	// sanity: the MAC is exactly 12 bytes at the front
-	if len(cipher) != 12+len(plaintext) {
-		t.Fatalf("cipher length %d, want %d", len(cipher), 12+len(plaintext))
+	// wire blob = AES-CTS(16-byte confounder || plaintext) || 12-byte HMAC
+	want := 12 + 16 + len(plaintext)
+	if len(cipher) != want {
+		t.Fatalf("cipher length %d, want %d", len(cipher), want)
 	}
 }
