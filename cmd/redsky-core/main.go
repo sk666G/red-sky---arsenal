@@ -150,6 +150,9 @@ func main() {
 	webXSSJS := flag.String("webxss-js", "alert(1)", "JS body to substitute into {JS}")
 	webXSSFPs := flag.Bool("webxss-fingerprints", false, "list framework fingerprint markers instead")
 	adEnum := flag.String("adenum", "", "AD enumeration action: rootdse|domain|users|groups|computers|gpos|trusts|asrep|kerberoast|unconstrained|pwdnotreq|laps|adcs")
+	moduleName := flag.String("module", "", "dispatch a named core module (see -module-help)")
+	moduleArgs := flag.String("args", "", "JSON args for -module, e.g. '{\"action\":\"imds\",\"provider\":\"aws\"}'")
+	moduleHelp := flag.Bool("module-help", false, "list every registered core module and exit")
 	adHost := flag.String("ad-host", "", "domain controller ip/hostname")
 	adPort := flag.Int("ad-port", 389, "LDAP port (389 or 636)")
 	adTLS := flag.Bool("ad-tls", false, "use LDAPS")
@@ -257,6 +260,32 @@ func main() {
 	wpa3Channel := flag.Int("wpa3-channel", 0, "WPA3: set wifi channel before observe")
 	wpa3Duration := flag.Duration("wpa3-duration", 60*time.Second, "WPA3: total observe run time")
 	flag.Parse()
+
+	// -module-help and -module are the registry-driven paths. When either
+	// is set they take priority over the per-module flags below.
+	if *moduleHelp {
+		fmt.Fprint(os.Stderr, "registered core modules:\n")
+		fmt.Fprint(os.Stderr, regHelp())
+		os.Exit(0)
+	}
+	if *moduleName != "" {
+		m, ok := regLookup(*moduleName)
+		if !ok {
+			fmt.Fprintf(os.Stderr, "no such core module: %s\n", *moduleName)
+			fmt.Fprintf(os.Stderr, "available:\n%s", regHelp())
+			os.Exit(2)
+		}
+		mgr := session.NewManager()
+		var raw []byte
+		if *moduleArgs != "" {
+			raw = []byte(*moduleArgs)
+		}
+		if err := m.Run(mgr, raw); err != nil {
+			fmt.Fprintf(os.Stderr, "module %s: %v\n", *moduleName, err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
 
 	if *pluginFlag != "" {
 		runPlugin(*pluginFlag, *pluginTimeout)
