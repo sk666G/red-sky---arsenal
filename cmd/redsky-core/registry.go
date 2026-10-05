@@ -776,3 +776,31 @@ func init() {
 		},
 	})
 }
+
+// cctv
+type regCCTVArgs struct {
+	Action  string `json:"action,omitempty"`
+	Host    string `json:"host,omitempty"`
+	URL     string `json:"url,omitempty"`
+	User    string `json:"user,omitempty"`
+	Pass    string `json:"pass,omitempty"`
+	Timeout int    `json:"timeout,omitempty"`
+}
+
+func init() {
+	regRegister(Module{
+		Name: "cctv",
+		Help: "RTSP camera recon (action=..., host=..., url=..., user=..., pass=..., timeout=...)",
+		Run: func(mgr *session.Manager, raw []byte) error {
+			var a regCCTVArgs
+			if err := regDecode(raw, &a); err != nil {
+				return err
+			}
+			runCCTV(mgr, cctvArgs{
+				Action: a.Action, Host: a.Host, URL: a.URL,
+				User: a.User, Pass: a.Pass, Timeout: a.Timeout,
+			})
+			return nil
+		},
+	})
+}

