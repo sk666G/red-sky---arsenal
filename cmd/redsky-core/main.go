@@ -908,11 +908,26 @@ func main() {
 }
 
 func acceptLoop(ln net.Listener, mgr *session.Manager) {
+	var backoff time.Duration
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
+			if errors.Is(err, net.ErrClosed) {
+				return
+			}
+			if backoff == 0 {
+				backoff = 5 * time.Millisecond
+			} else {
+				backoff *= 2
+				if backoff > time.Second {
+					backoff = time.Second
+				}
+			}
+			log.Printf("accept: %v (backoff %s)", err, backoff)
+			time.Sleep(backoff)
 			continue
 		}
+		backoff = 0
 		go handleConn(conn, mgr)
 	}
 }
