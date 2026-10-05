@@ -70,12 +70,15 @@ func BuildAPReq(opts APReqOptions) ([]byte, error) {
 	// build the Authenticator (before encryption)
 	authenticator := buildAuthenticator(opts)
 
-	// encrypt it with the session key. RC4-HMAC only for now.
-	if opts.SessionEType != ETypeRC4_HMAC {
-		return nil, fmt.Errorf("adgo: AP-REQ for session etype %d not implemented (RC4 only)", opts.SessionEType)
+	// encrypt the authenticator with the TGT's session key, at key usage 7
+	// (PA-TGS-REQ authenticator, RFC 4120 §7.5.1). etype-aware — RC4-HMAC
+	// or AES depending on what the DC delivered in the AS-REP session key.
+	if opts.SessionEType != ETypeRC4_HMAC &&
+		opts.SessionEType != ETypeAES128 &&
+		opts.SessionEType != ETypeAES256 {
+		return nil, fmt.Errorf("adgo: AP-REQ session etype %d not supported", opts.SessionEType)
 	}
-	// key usage for PA-TGS-REQ authenticator is 7 (RFC 4120 §7.5.1)
-	encAuth, err := encryptRC4WithUsage(opts.SessionKey, authenticator, 7)
+	encAuth, err := EncryptWithEType(opts.SessionKey, authenticator, 7, opts.SessionEType)
 	if err != nil {
 		return nil, err
 	}
