@@ -498,6 +498,12 @@ func sendEncrypted(conn net.Conn, sess *crypto.Session, t proto.MessageType, pay
 	if err != nil {
 		return err
 	}
+	// Serialize writes to the shared TLS conn. Every goroutine that
+	// reaches the wire — task loop, tunnel reads, capture pushes — goes
+	// through here, so the lock lives on this function, not on a caller.
+	// Two interleaved WriteFrame calls on a stream corrupt each other.
+	sendMu.Lock()
+	defer sendMu.Unlock()
 	return wire.WriteFrame(conn, wire.FlagEncrypted, enc)
 }
 
@@ -607,8 +613,6 @@ func closeTunnel(t *proto.TunnelClose) {
 }
 
 func sendTunnelAck(conn net.Conn, sess *crypto.Session, t proto.MessageType, payload any) {
-	sendMu.Lock()
-	defer sendMu.Unlock()
 	_ = sendEncrypted(conn, sess, t, payload)
 }
 
