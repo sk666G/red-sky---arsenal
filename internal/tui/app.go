@@ -95,11 +95,11 @@ type Model struct {
 	quitting      bool
 	err           error
 
-	planner      planner.Planner
-	planShown    bool
-	pendingPlan  *planner.Plan
-	planError    string
-	pendingGoal  string
+	planner     planner.Planner
+	planShown   bool
+	pendingPlan *planner.Plan
+	planError   string
+	pendingGoal string
 }
 
 // New builds the TUI model bound to a session manager.
@@ -296,7 +296,7 @@ func (m *Model) submit() {
 		if goal == "" {
 			return
 		}
-		m.mgr.Events <- session.Event{TS: time.Now(), Kind: "plan", Text: "planning: " + goal}
+		m.emitEvent("plan", "", "planning: "+goal)
 		m.pendingGoal = goal
 		return
 	}
@@ -337,6 +337,17 @@ func (m Model) scanLoot() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// emitEvent posts an operator-visible event onto the manager's channel
+// without ever blocking the UI. If the ring buffer is full, the event is
+// dropped — the tick loop and everything the user sees run on this same
+// goroutine, so a blocking send here freezes the whole console.
+func (m *Model) emitEvent(kind, agentID, text string) {
+	select {
+	case m.mgr.Events <- session.Event{TS: time.Now(), Kind: kind, AgentID: agentID, Text: text}:
+	default:
+	}
 }
 
 // ---- render ----
@@ -385,7 +396,7 @@ func (m Model) View() string {
 
 	eventsBox := m.renderEvents(w-2, 8)
 	promptBox := m.renderPrompt(w - 2)
-	statusBox := m.renderStatus(w - 2, len(sess))
+	statusBox := m.renderStatus(w-2, len(sess))
 
 	return lipgloss.JoinVertical(lipgloss.Left,
 		topRow,
@@ -566,7 +577,7 @@ func (m Model) viewDetail() string {
 			b.WriteString(crimsonStyle.Render(fmt.Sprintf("EXIT: %d", t.Result.ExitCode)) + "\n")
 		}
 		if t.Error != "" {
-			b.WriteString(errStyle.Render("error: " + t.Error) + "\n")
+			b.WriteString(errStyle.Render("error: "+t.Error) + "\n")
 		}
 	}
 	b.WriteString("\n" + ashStyle.Render("esc close"))
@@ -600,7 +611,6 @@ func (m Model) viewHelp() string {
 	}
 	return borderStyle.Width(m.width - 4).Render(strings.Join(help, "\n"))
 }
-
 
 // clampSessCursor keeps sessCursor inside the currently-selected session's
 // task list after the sessions cursor moves.

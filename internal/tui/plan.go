@@ -64,12 +64,7 @@ func (m *Model) executePlan() int {
 		// The agent dispatches these natively — no shell, no external binary.
 		target.SendKind("framework", step.Module, step.Args, 300)
 		n++
-		m.mgr.Events <- session.Event{
-			TS:      time.Now(),
-			Kind:    "plan",
-			AgentID: target.AgentID,
-			Text:    "queued " + step.Module + " " + strings.Join(step.Args, " "),
-		}
+		m.emitEvent("plan", target.AgentID, "queued "+step.Module+" "+strings.Join(step.Args, " "))
 	}
 	return n
 }
