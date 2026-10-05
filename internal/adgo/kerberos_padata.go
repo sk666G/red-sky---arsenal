@@ -7,7 +7,6 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/sk666G/red-sky---arsenal/internal/cryptogo"
@@ -167,11 +166,10 @@ func (p PAEncTimestamp) Marshal() ([]byte, error) {
 
 	tsEnc := DERSequence(inner)
 
-	// encrypt with RC4-HMAC (etype 23) or fail
-	if p.EType != ETypeRC4_HMAC {
-		return nil, fmt.Errorf("adgo: PA-ENC-TIMESTAMP for etype %d not implemented (RC4 only)", p.EType)
-	}
-	cipher, err := EncryptTimestampRC4(p.KerbKeyBytes, tsEnc)
+	// etype-aware: RC4-HMAC, AES-128, or AES-256 via the dispatcher. The
+	// caller is responsible for having derived the key at the right length
+	// for the requested etype.
+	cipher, err := EncryptWithEType(p.KerbKeyBytes, tsEnc, KerbUsageASReqPAEncTimestamp, p.EType)
 	if err != nil {
 		return nil, err
 	}

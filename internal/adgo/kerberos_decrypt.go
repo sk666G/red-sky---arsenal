@@ -67,13 +67,13 @@ const (
 //
 // encPart should be the raw bytes of the AS-REP's enc-part cipher field
 // (i.e., resp.EncPart from ParseASREP).
-func DecryptASRepPart(ntHash, encPart []byte) ([]byte, error) {
+func DecryptASRepPart(key, encPart []byte, etype int32) ([]byte, error) {
 	// key usage 3 for AS-REP enc-part
-	plain, err := DecryptRC4(ntHash, encPart, KerbUsageASRepEncPart)
+	plain, err := DecryptWithEType(key, encPart, KerbUsageASRepEncPart, etype)
 	if err != nil {
 		// try the legacy usage (8) as a fallback — some older KDCs
 		// mis-set this
-		plain2, err2 := DecryptRC4(ntHash, encPart, 8)
+		plain2, err2 := DecryptWithEType(key, encPart, 8, etype)
 		if err2 == nil {
 			return plain2, nil
 		}
@@ -85,13 +85,13 @@ func DecryptASRepPart(ntHash, encPart []byte) ([]byte, error) {
 // DecryptTGSRepPart decrypts a TGS-REP encrypted part. Used after a
 // Kerberoast when the operator has cracked the SPN owner's password.
 // Key usage 8 or 9 depending on the response.
-func DecryptTGSRepPart(ntHash, encPart []byte) ([]byte, error) {
-	plain, err := DecryptRC4(ntHash, encPart, KerbUsageTGSRepEncPart)
+func DecryptTGSRepPart(key, encPart []byte, etype int32) ([]byte, error) {
+	plain, err := DecryptWithEType(key, encPart, KerbUsageTGSRepEncPart, etype)
 	if err == nil {
 		return plain, nil
 	}
 	// try usage 9
-	return DecryptRC4(ntHash, encPart, KerbUsageTGSRepEncPart2)
+	return DecryptWithEType(key, encPart, KerbUsageTGSRepEncPart2, etype)
 }
 
 // EncASRepPart is the parsed AS-REP encrypted part. Holds the fields

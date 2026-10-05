@@ -64,3 +64,6 @@ dist/
 planner-test
 /redsky-core
 /redsky-agent
+tmp/
+*.pcap
+*.sqlite

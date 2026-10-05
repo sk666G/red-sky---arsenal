@@ -855,11 +855,15 @@ type DroneStart struct {
 	Buttons uint16 `json:"buttons,omitempty"`
 
 	// goto
-	Lat, Lon, Alt float32 `json:"lat,omitempty"`
-	Vx, Vy, Vz    float32 `json:"vx,omitempty"`
-	UseV2         bool    `json:"use_v2,omitempty"`
-	SigKeyHex     string  `json:"sig_key_hex,omitempty"`
-	LinkID        uint8   `json:"link_id,omitempty"`
+	Lat       float32 `json:"lat,omitempty"`
+	Lon       float32 `json:"lon,omitempty"`
+	Alt       float32 `json:"alt,omitempty"`
+	Vx        float32 `json:"vx,omitempty"`
+	Vy        float32 `json:"vy,omitempty"`
+	Vz        float32 `json:"vz,omitempty"`
+	UseV2     bool    `json:"use_v2,omitempty"`
+	SigKeyHex string  `json:"sig_key_hex,omitempty"`
+	LinkID    uint8   `json:"link_id,omitempty"`
 }
 
 // DroneData streams results back.

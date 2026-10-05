@@ -101,7 +101,7 @@ func KerberoastChain(ctx context.Context, opts KerbAuthOptions) (*KerbAuthResult
 	}
 
 	// 4. decrypt the AS-REP enc-part
-	plainEncASRep, err := DecryptASRepPart(ntHash, asRep.EncPart)
+	plainEncASRep, err := DecryptASRepPart(ntHash, asRep.EncPart, asRep.EType)
 	if err != nil {
 		return nil, fmt.Errorf("adgo: AS-REP decrypt: %w", err)
 	}

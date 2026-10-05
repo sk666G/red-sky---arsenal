@@ -86,7 +86,7 @@ func TestDecryptASRepPartFallsBackToLegacy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := DecryptASRepPart(ntHash, cipher3)
+	got, err := DecryptASRepPart(ntHash, cipher3, ETypeRC4_HMAC)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestDecryptASRepPartFallsBackToLegacy(t *testing.T) {
 
 	// now the legacy usage-8 path
 	cipher8, _ := encryptRC4WithUsage(ntHash, plaintext, 8)
-	got2, err := DecryptASRepPart(ntHash, cipher8)
+	got2, err := DecryptASRepPart(ntHash, cipher8, ETypeRC4_HMAC)
 	if err != nil {
 		t.Fatalf("legacy usage fallback failed: %v", err)
 	}

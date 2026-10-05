@@ -5,7 +5,7 @@
 // PMKID is delivered in EAPOL-Key message 1 (or in the RSN IE of a
 // reassociation request during roaming). It's computed as:
 //
-//     PMKID = HMAC-SHA1-128(PMK, "PMK Name" || AP_MAC || STA_MAC)
+//	PMKID = HMAC-SHA1-128(PMK, "PMK Name" || AP_MAC || STA_MAC)
 //
 // Because the inputs (AP MAC, STA MAC, AP nonce from the ANonce field of
 // EAPOL msg 1) are all observable on the air, one captured frame 1 is
@@ -35,12 +35,12 @@ import (
 
 // PMKIDHit is one harvested PMKID with the addressing needed for crack.
 type PMKIDHit struct {
-	TS       time.Time
-	BSSID    net.HardwareAddr
-	Station  net.HardwareAddr
-	PMKID    []byte // 16 bytes
-	SSID     string // may be empty if no beacon captured yet
-	ANonce   []byte // 32 bytes from EAPOL msg 1
+	TS        time.Time
+	BSSID     net.HardwareAddr
+	Station   net.HardwareAddr
+	PMKID     []byte // 16 bytes
+	SSID      string // may be empty if no beacon captured yet
+	ANonce    []byte // 32 bytes from EAPOL msg 1
 	ReplayCtr uint64
 }
 
@@ -179,8 +179,9 @@ func parsePMKIDFrame(raw []byte, filter net.HardwareAddr) (PMKIDHit, bool) {
 	if fc&0x0C != 0x08 { // not a data frame
 		return PMKIDHit{}, false
 	}
-	toDS := (fc>>8)&0x01 != 0
-	fromDS := (fc>>8)&0x02 != 0
+	// FC flags: toDS is bit 0, fromDS is bit 1 of the frame-control byte.
+	toDS := fc&0x01 != 0
+	fromDS := fc&0x02 != 0
 
 	// addr1/2/3 are at fixed offsets
 	addr1 := frame[4:10]
@@ -236,13 +237,14 @@ func parsePMKIDFrame(raw []byte, filter net.HardwareAddr) (PMKIDHit, bool) {
 // parseEAPOLKey parses an EAPOL-Key message and extracts PMKID if present.
 //
 // Layout (RFC/802.11i):
-//   EAPOL header (4 bytes): version, type (3 = key), length (2 BE)
-//   Key descriptor (95+ bytes):
-//     descriptor type (1) = 0x02 for RSN
-//     key_info (2 BE) — bit 3 = key type, bits 4-5 = key install/ack
-//     key_length (2), replay_counter (8), key_nonce (32), key_iv (16),
-//     key_rsc (8), key_id (8), key_mic (16), key_data_length (2 BE),
-//     key_data (key_data_length bytes)
+//
+//	EAPOL header (4 bytes): version, type (3 = key), length (2 BE)
+//	Key descriptor (95+ bytes):
+//	  descriptor type (1) = 0x02 for RSN
+//	  key_info (2 BE) — bit 3 = key type, bits 4-5 = key install/ack
+//	  key_length (2), replay_counter (8), key_nonce (32), key_iv (16),
+//	  key_rsc (8), key_id (8), key_mic (16), key_data_length (2 BE),
+//	  key_data (key_data_length bytes)
 //
 // Message 1 of the 4-way handshake has key_info & 0x2008 == 0x2008
 // (ack set, mic clear, install clear). PMKID KDE, when present, is inside

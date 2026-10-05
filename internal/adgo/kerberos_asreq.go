@@ -158,6 +158,7 @@ func BuildASREQ(opts ASREQOptions) ([]byte, error) {
 type ASREPResult struct {
 	KDCREPMsgType int
 	Realm         string
+	EType         int32  // the etype of the enc-part (from EncryptedData [0])
 	EncPart       []byte // the encrypted blob (the roast target)
 	Raw           []byte
 }

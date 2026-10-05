@@ -38,7 +38,13 @@ type WallpaperResult struct {
 	Cmd    string
 	OK     bool
 	Err    string
+	// Output carries the combined stdout+stderr of the most recent failed
+	// command, for logging what each tool said before the next one was tried.
+	Output []byte
 }
+
+// recordOutput stores the combined stdout+stderr of a failed command attempt.
+func (r *WallpaperResult) recordOutput(b []byte) { r.Output = append(r.Output[:0], b...) }
 
 // SetWallpaper sets the desktop background to ImagePath.
 func SetWallpaper(opts WallpaperOptions) (WallpaperResult, error) {
@@ -117,13 +123,11 @@ func setWallpaperUnix(path string, dry bool) (WallpaperResult, error) {
 			r.OK = true
 			return r, nil
 		}
-		r.Output(out)
+		r.recordOutput(out)
 	}
 	r.Err = "no supported desktop tool found (gsettings/feh/xfconf-query)"
 	return r, errors.New(r.Err)
 }
-
-func (r *WallpaperResult) Output(b []byte) { r.Cmd = r.Cmd } // no-op helper
 
 // LogScrubOptions controls a log-wipe pass.
 type LogScrubOptions struct {

@@ -1,11 +1,11 @@
 // Package icsdiscover is a Go port of the ICS portion of Program/ics_scada.
 // Finds industrial control systems on a network via five protocol channels:
 //
-//   Modbus/TCP    (502)      read device identification
-//   EtherNet/IP   (44818)    CIP ListIdentity
-//   Profinet DCP  (34964/udp) Identify-All
-//   OPC-UA        (4840)     Hello handshake
-//   BACnet/IP     (47808/udp) Who-Is broadcast
+//	Modbus/TCP    (502)      read device identification
+//	EtherNet/IP   (44818)    CIP ListIdentity
+//	Profinet DCP  (34964/udp) Identify-All
+//	OPC-UA        (4840)     Hello handshake
+//	BACnet/IP     (47808/udp) Who-Is broadcast
 //
 // Discovery-only. No writes, no state changes, no control commands.
 package icsdiscover
@@ -108,7 +108,7 @@ func Scan(ctx context.Context, opts Options) []Device {
 	wg.Wait()
 
 	// 2. EtherNet/IP ListIdentity on hosts that had 44818 open.
-	for _, d := range snapshot(byIP, mu) {
+	for _, d := range snapshot(byIP, &mu) {
 		if !hasProto(d, "ethernet-ip") {
 			continue
 		}
@@ -123,7 +123,7 @@ func Scan(ctx context.Context, opts Options) []Device {
 	}
 
 	// 3. OPC-UA Hello on hosts with 4840 open.
-	for _, d := range snapshot(byIP, mu) {
+	for _, d := range snapshot(byIP, &mu) {
 		if !hasProto(d, "opc-ua") {
 			continue
 		}
@@ -167,7 +167,7 @@ func Scan(ctx context.Context, opts Options) []Device {
 	return out
 }
 
-func snapshot(m map[string]*Device, mu sync.Mutex) []Device {
+func snapshot(m map[string]*Device, mu *sync.Mutex) []Device {
 	mu.Lock()
 	defer mu.Unlock()
 	out := make([]Device, 0, len(m))
@@ -246,11 +246,11 @@ func opcuaHello(ip string, timeout time.Duration) string {
 	endpoint := "opc.tcp://" + ip + ":4840"
 	// HEL message: 'HEL' + 'F' + size(4) + ver(4) recv(4) send(4) maxmsg(4) maxchunk(4) strlen(4) url
 	body := make([]byte, 0, 64)
-	body = append(body, 0, 0, 0, 0) // ver
+	body = append(body, 0, 0, 0, 0)       // ver
 	body = append(body, 0xff, 0xff, 0, 0) // recv
 	body = append(body, 0xff, 0xff, 0, 0) // send
-	body = append(body, 0, 0, 0, 0) // maxmsg
-	body = append(body, 0, 0, 0, 0) // maxchunk
+	body = append(body, 0, 0, 0, 0)       // maxmsg
+	body = append(body, 0, 0, 0, 0)       // maxchunk
 	sl := make([]byte, 4)
 	binary.LittleEndian.PutUint32(sl, uint32(len(endpoint)))
 	body = append(body, sl...)
