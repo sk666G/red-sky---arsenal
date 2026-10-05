@@ -47,10 +47,22 @@ type fakeAddr struct{}
 func (fakeAddr) Network() string { return "fake" }
 func (fakeAddr) String() string  { return "fake" }
 
-// csFor returns a crypto.Session good enough for Register to accept.
-// Register doesn't touch it until a task is written, so a zero-value
-// wrapper is fine for the tests that don't exercise the wire.
-func csFor() *crypto.Session { return &crypto.Session{} }
+// csFor returns a real crypto.Session built from a fixed 32-byte key.
+// Register spawns a writerLoop that calls s.crypto.Encrypt as soon as a
+// task lands on s.write, so a zero-value Session is a nil-deref trap.
+// Tests that fire a task need a real AEAD; tests that don't get one for
+// free — the fixed key keeps the tests hermetic.
+func csFor() *crypto.Session {
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = byte(i + 1)
+	}
+	s, err := crypto.NewSession(key)
+	if err != nil {
+		panic("crypto.NewSession: " + err.Error())
+	}
+	return s
+}
 
 // --- Invariant 1: duplicate Register does not leak the new session ---
 //
@@ -186,3 +198,64 @@ func TestGetCaptureChannelUnknown(t *testing.T) {
 
 // compile guard: fakeConn must satisfy net.Conn
 var _ net.Conn = (*fakeConn)(nil)
+
+// --- Invariant 7: Snapshot returns a consistent copy ---
+//
+// The whole point of Snapshot is that the returned data is independent of
+// the live Manager — a TUI reading it can't race a concurrent beacon.
+func TestSnapshotIsDetached(t *testing.T) {
+	m := NewManager()
+	defer close(m.Events)
+	s := m.Register("agent-1", proto.AgentInfo{Hostname: "h1"}, newFakeConn(), csFor())
+
+	// put one task in flight
+	s.Send("id", nil, 5)
+
+	snap := m.Snapshot()
+	if len(snap.Sessions) != 1 {
+		t.Fatalf("Sessions len=%d, want 1", len(snap.Sessions))
+	}
+	if snap.Sessions[0].AgentID != "agent-1" {
+		t.Fatalf("AgentID=%q", snap.Sessions[0].AgentID)
+	}
+	if !snap.Sessions[0].Connected {
+		t.Fatalf("Connected=false, want true")
+	}
+	if len(snap.Sessions[0].Tasks) != 1 {
+		t.Fatalf("Tasks len=%d, want 1", len(snap.Sessions[0].Tasks))
+	}
+
+	// mutate the live session; the snapshot must not see it
+	s.mu.Lock()
+	s.Info.Hostname = "h2"
+	s.LastSeen = time.Now().Add(time.Hour)
+	s.mu.Unlock()
+
+	if snap.Sessions[0].Info.Hostname != "h1" {
+		t.Fatalf("snapshot shares Info with live session — got %q want h1", snap.Sessions[0].Info.Hostname)
+	}
+	if snap.Sessions[0].LastSeen.After(time.Now().Add(time.Minute)) {
+		t.Fatalf("snapshot shares LastSeen with live session")
+	}
+}
+
+// --- Invariant 8: Snapshot ordering is stable ---
+//
+// Two snapshots of the same state must order sessions identically —
+// otherwise the TUI flickers on every tick.
+func TestSnapshotOrderStable(t *testing.T) {
+	m := NewManager()
+	defer close(m.Events)
+	for _, id := range []string{"z", "a", "m"} {
+		m.Register(id, proto.AgentInfo{}, newFakeConn(), csFor())
+		// tiny gap so LastSeen differs, but the sort fallback is AgentID
+		time.Sleep(2 * time.Millisecond)
+	}
+	a := m.Snapshot()
+	b := m.Snapshot()
+	for i := range a.Sessions {
+		if a.Sessions[i].AgentID != b.Sessions[i].AgentID {
+			t.Fatalf("order wobble at %d: %q vs %q", i, a.Sessions[i].AgentID, b.Sessions[i].AgentID)
+		}
+	}
+}

@@ -190,7 +190,14 @@ func (m *Manager) Register(agentID string, info proto.AgentInfo, conn net.Conn, 
 	return s
 }
 
+// emit pushes an operator-visible event onto the Events channel.
+// Fire-and-forget: never blocks the caller, never panics on a
+// closed channel. The TUI can close Events on shutdown while
+// readerLoop and writerLoop are still draining their work — those
+// goroutines must not take the process down with them when they
+// try to log one last thing.
 func (m *Manager) emit(kind, agentID, text string) {
+	defer func() { _ = recover() }() // closed Events: drop the event, don't crash
 	select {
 	case m.Events <- Event{TS: time.Now(), Kind: kind, AgentID: agentID, Text: text}:
 	default:
