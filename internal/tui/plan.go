@@ -12,7 +12,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/sk666G/red-sky---arsenal/internal/planner"
-	"github.com/sk666G/red-sky---arsenal/internal/session"
 )
 
 // planMsg carries a planner result back into the model.
@@ -105,11 +104,7 @@ func (m *Model) planKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "y":
 		n := m.executePlan()
 		if n > 0 {
-			m.mgr.Events <- session.Event{
-				TS:   time.Now(),
-				Kind: "plan",
-				Text: fmt.Sprintf("executing plan: %d task(s) queued", n),
-			}
+			m.emitEvent("plan", "", fmt.Sprintf("executing plan: %d task(s) queued", n))
 		}
 		m.planShown = false
 		m.pendingPlan = nil
