@@ -624,6 +624,13 @@ type AdEnumStart struct {
 	RoastRealm string `json:"roast_realm,omitempty"`
 	RoastDC    string `json:"roast_dc,omitempty"`
 	RoastPort  int    `json:"roast_port,omitempty"`
+	// Kerberoast (authenticated)
+	KerbUser  string `json:"kerb_user,omitempty"`
+	KerbPass  string `json:"kerb_pass,omitempty"`
+	KerbRealm string `json:"kerb_realm,omitempty"`
+	KerbDC    string `json:"kerb_dc,omitempty"`
+	KerbSPN   string `json:"kerb_spn,omitempty"`
+	KerbPort  int    `json:"kerb_port,omitempty"`
 }
 
 // AdEnumData streams one LDAP entry per message, plus done / error markers.

