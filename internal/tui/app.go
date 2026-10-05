@@ -114,6 +114,12 @@ func New(mgr *session.Manager, engagement string, port int, pl planner.Planner) 
 		planner:    pl,
 		started:    time.Now(),
 		histPos:    -1,
+		// Default size before the first tea.WindowSizeMsg arrives.
+		// 80x24 is the conventional terminal default; the first resize
+		// event overwrites these within one frame. Without these, the
+		// very first render is on a zero-size terminal.
+		width:  80,
+		height: 24,
 	}
 }
 
