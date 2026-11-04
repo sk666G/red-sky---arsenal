@@ -24,6 +24,7 @@ import (
 
 	"github.com/sk666G/red-sky---arsenal/internal/adgo"
 	"github.com/sk666G/red-sky---arsenal/internal/capturer"
+	"github.com/sk666G/red-sky---arsenal/internal/cloudgo"
 	"github.com/sk666G/red-sky---arsenal/internal/crypto"
 	"github.com/sk666G/red-sky---arsenal/internal/dnsexfil"
 	"github.com/sk666G/red-sky---arsenal/internal/engagement"
@@ -2405,6 +2406,71 @@ func registerDataSink(mgr *session.Manager) {
 			} else {
 				// No vuln classified — still log the response for visibility
 				log.Printf("[ics %s] %s %s", d.Protocol, d.Host, d.Stage)
+			}
+			return true
+
+		case proto.TypeCloudData:
+			var d proto.CloudData
+			if err := json.Unmarshal(env.Payload, &d); err != nil {
+				log.Printf("[cloud] decode: %v", err)
+				return true
+			}
+			// Terminal marker or error — claim + log, no DB write.
+			if d.Done || !d.OK || d.Stage == "" {
+				if d.Done {
+					log.Printf("[cloud] done")
+				} else if d.Message != "" {
+					log.Printf("[cloud %s] %s", d.Stage, d.Message)
+				}
+				return true
+			}
+			// Host attribution: agent hostname from the beacon info.
+			// Cloud probes target the agent's own environment, so the
+			// hostname IS the cloud instance identity. The session's
+			// connection field is unexported across package boundaries,
+			// so no peer-IP fallback here. When hostname is empty (very
+			// early beacon), the row groups under "agent:unknown".
+			agentHost := "agent:unknown"
+			if s.Info.Hostname != "" {
+				agentHost = "agent:" + s.Info.Hostname
+			}
+			// Raw finding for evidence trail.
+			if engDB != nil {
+				raw, err := json.Marshal(d)
+				if err == nil {
+					if _, err := engDB.AddFinding(engagement.Finding{
+						Module: "cloud:" + d.Stage,
+						Kind:   "cloud-response",
+						Data:   raw,
+					}); err != nil {
+						log.Printf("[cloud] finding DB: %v", err)
+					}
+				}
+			}
+			// Classify → vulns against the agent host.
+			classified := cloudgo.ClassifyCloudData(d)
+			if len(classified) > 0 && engDB != nil {
+				hostID, err := engDB.UpsertHost(engagement.Host{
+					IP:       agentHost,
+					Hostname: s.Info.Hostname,
+				})
+				if err != nil {
+					log.Printf("[cloud] upsert host %s: %v", agentHost, err)
+				} else {
+					for _, v := range classified {
+						if _, err := engDB.AddVuln(engagement.Vuln{
+							HostID:   hostID,
+							Name:     v.Name,
+							Severity: v.Severity,
+							Evidence: v.Evidence,
+						}); err != nil {
+							log.Printf("[cloud] add vuln %q: %v", v.Name, err)
+						}
+					}
+					log.Printf("[cloud %s] %s — %d vuln(s)", d.Stage, agentHost, len(classified))
+				}
+			} else {
+				log.Printf("[cloud %s] %s", d.Stage, agentHost)
 			}
 			return true
 		}
