@@ -1009,6 +1009,8 @@ func runIcs(conn net.Conn, sess *crypto.Session, ic proto.IcsStart) {
 	send := func(stage, msg, detail string, ok, done bool) {
 		sendTunnelAck(conn, sess, proto.TypeIcsData, proto.IcsData{
 			SessionID: ic.SessionID,
+			Protocol:  ic.Protocol,
+			Host:      ic.Host,
 			Stage:     stage,
 			Message:   msg,
 			Detail:    detail,

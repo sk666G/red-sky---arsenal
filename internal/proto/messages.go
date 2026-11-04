@@ -390,11 +390,16 @@ type IcsStart struct {
 // IcsData streams progress / results back to core.
 type IcsData struct {
 	SessionID string `json:"session_id"`
-	Stage     string `json:"stage"` // scan|read|write|result|done|error
-	Message   string `json:"message"`
-	Detail    string `json:"detail,omitempty"`
-	OK        bool   `json:"ok"`
-	Done      bool   `json:"done"`
+	// Protocol and Host echo back the values from IcsStart so consumers
+	// (DB sink, report builder) can classify and attribute the response
+	// without a session-scoped start cache.
+	Protocol string `json:"protocol,omitempty"` // modbus|s7|dnp3|bacnet|enip|opcua
+	Host     string `json:"host,omitempty"`
+	Stage    string `json:"stage"` // scan|read|write|result|done|error
+	Message  string `json:"message"`
+	Detail   string `json:"detail,omitempty"`
+	OK       bool   `json:"ok"`
+	Done     bool   `json:"done"`
 }
 
 // CloudStart kicks off a cloud-provider operation on the agent.
