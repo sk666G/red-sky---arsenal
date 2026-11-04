@@ -85,3 +85,6 @@ test:
 .PHONY: clean
 clean:
 	rm -rf $(BINDIR) dist
+
+docs:
+	go run ./cmd/moddocs
