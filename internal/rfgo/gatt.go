@@ -30,9 +30,9 @@ import (
 
 // GATTService is one primary service with its characteristics.
 type GATTService struct {
-	Handle          string           `json:"handle,omitempty"`
-	UUID            string           `json:"uuid"`
-	Vendor          string           `json:"vendor,omitempty"`
+	Handle          string               `json:"handle,omitempty"`
+	UUID            string               `json:"uuid"`
+	Vendor          string               `json:"vendor,omitempty"`
 	Characteristics []GATTCharacteristic `json:"characteristics,omitempty"`
 }
 

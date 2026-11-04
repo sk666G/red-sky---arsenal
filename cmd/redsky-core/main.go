@@ -34,6 +34,7 @@ import (
 	"github.com/sk666G/red-sky---arsenal/internal/plugin"
 	"github.com/sk666G/red-sky---arsenal/internal/proto"
 	"github.com/sk666G/red-sky---arsenal/internal/recon2"
+	"github.com/sk666G/red-sky---arsenal/internal/rfgo"
 	"github.com/sk666G/red-sky---arsenal/internal/scanner"
 	"github.com/sk666G/red-sky---arsenal/internal/session"
 	"github.com/sk666G/red-sky---arsenal/internal/socialgo"
@@ -2617,6 +2618,42 @@ func registerDataSink(mgr *session.Manager) {
 				engDB.AddFinding(engagement.Finding{Module: "drone", Kind: "drone-frames", Data: raw})
 			}
 			log.Printf("[drone] %d frame(s)", len(d.Frames))
+			return true
+
+		case proto.TypeBluetoothData:
+			var d proto.BluetoothData
+			if err := json.Unmarshal(env.Payload, &d); err != nil {
+				log.Printf("[bt] decode: %v", err)
+				return true
+			}
+			if d.Done || d.Error != "" {
+				if d.Done {
+					log.Printf("[bt] done")
+				} else {
+					log.Printf("[bt] %s", d.Error)
+				}
+				return true
+			}
+			if engDB != nil {
+				raw, _ := json.Marshal(d)
+				engDB.AddFinding(engagement.Finding{Module: "bluetooth", Kind: "bt-event", Data: raw})
+			}
+			classified := rfgo.ClassifyBluetooth(d)
+			if len(classified) > 0 && engDB != nil {
+				host := "bt:" + d.Address
+				if d.Address == "" {
+					host = "bt:unknown"
+				}
+				hostID, err := engDB.UpsertHost(engagement.Host{IP: host})
+				if err != nil {
+					log.Printf("[bt] upsert %s: %v", host, err)
+				} else {
+					for _, v := range classified {
+						engDB.AddVuln(engagement.Vuln{HostID: hostID, Name: v.Name, Severity: v.Severity, Evidence: v.Evidence})
+					}
+					log.Printf("[bt] %s — %d vuln(s)", host, len(classified))
+				}
+			}
 			return true
 
 		}
