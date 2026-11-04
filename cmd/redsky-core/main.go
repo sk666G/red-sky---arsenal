@@ -29,6 +29,7 @@ import (
 	"github.com/sk666G/red-sky---arsenal/internal/planner"
 	"github.com/sk666G/red-sky---arsenal/internal/plugin"
 	"github.com/sk666G/red-sky---arsenal/internal/proto"
+	"github.com/sk666G/red-sky---arsenal/internal/recon2"
 	"github.com/sk666G/red-sky---arsenal/internal/scanner"
 	"github.com/sk666G/red-sky---arsenal/internal/session"
 	rsTLS "github.com/sk666G/red-sky---arsenal/internal/tls"
@@ -240,6 +241,7 @@ func main() {
 	reportSrcDir := flag.String("report-dir", "", "directory to walk for JSON sources")
 	reportFindings := flag.String("report-findings", "", "path to a JSON array of findings")
 	reportOut := flag.String("report-out", "", "output path (default: /tmp/redsky_report_<ts>.md)")
+	reportFromDB := flag.Bool("report-from-db", false, "render a report from the engagement DB (core-side, no agent)")
 	webReqURL := flag.String("webreq", "", "send a raw HTTP request via the first agent")
 	webReqMethod := flag.String("webreq-method", "GET", "HTTP method")
 	webReqBody := flag.String("webreq-body", "", "request body (string)")
@@ -831,6 +833,29 @@ func main() {
 			Pass:    *cctvPass,
 			Timeout: *cctvTimeout,
 		})
+	}
+
+	// DB-backed report — core-side render, no agent, reads engDB directly
+	if *reportFromDB {
+		if engDB == nil {
+			log.Fatalf("-report-from-db: engagement DB not open")
+		}
+		if *reportTitle == "" {
+			log.Fatalf("-report-from-db requires -report-title")
+		}
+		r, err := recon2.ReportFromDB(engDB, *reportTitle, *reportOperator, *reportEngagement)
+		if err != nil {
+			log.Fatalf("report from DB: %v", err)
+		}
+		outPath := *reportOut
+		if outPath == "" {
+			outPath = fmt.Sprintf("Output/report_%d.md", time.Now().Unix())
+		}
+		if err := r.Save(outPath); err != nil {
+			log.Fatalf("report save: %v", err)
+		}
+		fmt.Printf("report written: %s (%d finding(s))\n", outPath, len(r.Findings))
+		return
 	}
 
 	// report dispatch — build a report from collected JSON
