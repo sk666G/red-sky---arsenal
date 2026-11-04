@@ -126,6 +126,27 @@ type Manager struct {
 	sessions  map[string]*Session
 	mu        sync.RWMutex
 	Events    chan Event
+
+	// sink is called on every envelope that no case in readerLoop
+	// consumes. Modules register a sink at startup via SetDataSink
+	// so structured results (AD enum, ICS, cloud, ...) can be routed
+	// without adding a per-type case arm to readerLoop.
+	sinkMu sync.RWMutex
+	sink   DataSink
+}
+
+// DataSink handles a decoded envelope that has no session-level consumer.
+// Called from readerLoop under the same goroutine that owns the session.
+// Return true to claim the message; false to let readerLoop fall through
+// to its default error emit.
+type DataSink func(s *Session, env proto.Envelope) bool
+
+// SetDataSink installs the sink. Called once at startup by cmd/redsky-core.
+// Nil disables the sink — behavior reverts to the old "unknown message" emit.
+func (m *Manager) SetDataSink(fn DataSink) {
+	m.sinkMu.Lock()
+	m.sink = fn
+	m.sinkMu.Unlock()
 }
 
 // Event is something worth showing the operator.
@@ -374,6 +395,12 @@ func (m *Manager) readerLoop(s *Session) {
 				m.emit("error", s.AgentID, e.Message)
 			}
 		default:
+			m.sinkMu.RLock()
+			sink := m.sink
+			m.sinkMu.RUnlock()
+			if sink != nil && sink(s, env) {
+				continue
+			}
 			m.emit("error", s.AgentID, "unknown message: "+string(env.Type))
 		}
 	}

@@ -334,6 +334,7 @@ func main() {
 	defer db.Close()
 	engDB = db
 	fmt.Printf("engagement DB: %s\n", db.Path())
+	registerDataSink(mgr)
 
 	addr := fmt.Sprintf("%s:%d", *bind, *port)
 	ln, err := net.Listen("tcp", addr)
@@ -2260,4 +2261,64 @@ func runDNSTunnelDispatch(mgr *session.Manager, a dnsTunnelArgs) {
 	if err := s.SendDNSTunnelStart(sessionID, req); err != nil {
 		log.Printf("[dnstunnel] start: %v", err)
 	}
+}
+
+// registerDataSink installs the Manager's fallthrough handler for
+// streaming result types that have no session-level consumer. Every
+// envelope readerLoop would otherwise drop falls through here.
+//
+// Current handlers:
+//   - TypeAdEnumData: structured LDAP entries from the agent.
+//     Upserts a Finding row per entry (raw Attrs preserved) and
+//     prints one line per entry to stdout for operator visibility.
+//     Skips the terminal Done marker and error reports.
+//
+// Returns true for claimed messages so readerLoop doesn't emit
+// "unknown message". Additional types get added here as modules
+// start streaming structured results back.
+func registerDataSink(mgr *session.Manager) {
+	mgr.SetDataSink(func(s *session.Session, env proto.Envelope) bool {
+		switch env.Type {
+		case proto.TypeAdEnumData:
+			var d proto.AdEnumData
+			if err := json.Unmarshal(env.Payload, &d); err != nil {
+				log.Printf("[adenum] decode: %v", err)
+				return true
+			}
+			// Terminal Done marker, error report, or empty entry — skip
+			// the DB write but still claim the message so readerLoop
+			// doesn't complain.
+			if d.Done || !d.OK || d.DN == "" {
+				if d.Done {
+					log.Printf("[adenum] %s done", d.Action)
+				} else if d.Message != "" {
+					log.Printf("[adenum] %s: %s", d.Action, d.Message)
+				}
+				return true
+			}
+			// Every entry: one Finding row, raw Attrs preserved.
+			if engDB != nil {
+				raw, err := json.Marshal(d)
+				if err == nil {
+					if _, err := engDB.AddFinding(engagement.Finding{
+						Module: "ad:" + d.Action,
+						Kind:   "ldap-entry",
+						Data:   raw,
+					}); err != nil {
+						log.Printf("[adenum] DB: %v", err)
+					}
+				}
+			}
+			// One line to stdout per entry — module: <first attr summary> DN
+			summary := d.DN
+			if v, ok := d.Attrs["sAMAccountName"]; ok && len(v) > 0 {
+				summary = v[0] + " " + d.DN
+			} else if v, ok := d.Attrs["dNSHostName"]; ok && len(v) > 0 {
+				summary = v[0] + " " + d.DN
+			}
+			log.Printf("[adenum %s] %s", d.Action, summary)
+			return true
+		}
+		return false
+	})
 }
