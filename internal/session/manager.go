@@ -120,9 +120,12 @@ func (s *Session) Tasks() []*Task {
 
 // Manager tracks all live sessions.
 type Manager struct {
-	sessions map[string]*Session
-	mu       sync.RWMutex
-	Events   chan Event
+	emitMu    sync.RWMutex
+	done      chan struct{}
+	closeOnce sync.Once
+	sessions  map[string]*Session
+	mu        sync.RWMutex
+	Events    chan Event
 }
 
 // Event is something worth showing the operator.
@@ -136,6 +139,7 @@ type Event struct {
 // NewManager creates an empty manager.
 func NewManager() *Manager {
 	return &Manager{
+		done:     make(chan struct{}),
 		sessions: make(map[string]*Session),
 		Events:   make(chan Event, 256),
 	}
@@ -197,9 +201,17 @@ func (m *Manager) Register(agentID string, info proto.AgentInfo, conn net.Conn, 
 // goroutines must not take the process down with them when they
 // try to log one last thing.
 func (m *Manager) emit(kind, agentID, text string) {
-	defer func() { _ = recover() }() // closed Events: drop the event, don't crash
+	m.emitMu.RLock()
+	defer m.emitMu.RUnlock()
+	select {
+	case <-m.done:
+		return
+	default:
+	}
 	select {
 	case m.Events <- Event{TS: time.Now(), Kind: kind, AgentID: agentID, Text: text}:
+	case <-m.done:
+		return
 	default:
 	}
 }
@@ -723,4 +735,14 @@ func (s *Session) SendWorkflowStart(sessionID string, req proto.WorkflowStart) e
 func (s *Session) SendDNSTunnelStart(sessionID string, req proto.DNSTunnelStart) error {
 	req.SessionID = sessionID
 	return s.sendTunnelMsg(proto.TypeDNSTunnelStart, req)
+}
+
+// Close gracefully shuts down the manager.
+func (m *Manager) Close() {
+	m.closeOnce.Do(func() {
+		m.emitMu.Lock()
+		defer m.emitMu.Unlock()
+		close(m.done)
+		close(m.Events)
+	})
 }

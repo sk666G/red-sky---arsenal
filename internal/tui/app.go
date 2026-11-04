@@ -221,12 +221,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			} else if m.focus == paneTasks {
 				// show task detail
-				sess := m.mgr.Sessions()
+				sess := m.mgr.Snapshot().Sessions
 				if m.selected < len(sess) {
-					tasks := sess[m.selected].Tasks()
-					if m.sessCursor < len(tasks) {
-						m.detailTask = tasks[m.sessCursor]
-						m.detailShown = true
+					target := sess[m.selected]
+					if live, ok := m.mgr.Get(target.AgentID); ok {
+						tasks := live.Tasks()
+						if m.sessCursor < len(tasks) {
+							m.detailTask = tasks[m.sessCursor]
+							m.detailShown = true
+						}
 					}
 				}
 			} else if m.focus == panePrompt {
@@ -267,14 +270,14 @@ func (m *Model) cursorUp() {
 func (m *Model) cursorDown() {
 	switch m.focus {
 	case paneSessions, panePrompt:
-		if m.selected < len(m.mgr.Sessions())-1 {
+		if m.selected < len(m.mgr.Snapshot().Sessions)-1 {
 			m.selected++
 			m.clampSessCursor()
 		}
 	case paneTasks:
-		sess := m.mgr.Sessions()
+		sess := m.mgr.Snapshot().Sessions
 		if m.selected < len(sess) {
-			n := len(sess[m.selected].Tasks())
+			n := len(sess[m.selected].Tasks)
 			if m.sessCursor < n-1 {
 				m.sessCursor++
 			}
@@ -307,7 +310,7 @@ func (m *Model) submit() {
 		return
 	}
 
-	sess := m.mgr.Sessions()
+	sess := m.mgr.Snapshot().Sessions
 	if len(sess) == 0 {
 		m.err = fmt.Errorf("no sessions connected")
 		return
@@ -319,8 +322,10 @@ func (m *Model) submit() {
 	// Send one shell command to the target; args split on whitespace.
 	parts := strings.Fields(cmd)
 	target := sess[m.selected]
-	target.Send(parts[0], parts[1:], 60)
-	m.sessCursor = len(target.Tasks()) - 1 // focus the new task
+	if live, ok := m.mgr.Get(target.AgentID); ok {
+		live.Send(parts[0], parts[1:], 60)
+	}
+	m.sessCursor = len(target.Tasks) - 1 // focus the new task
 }
 
 func (m Model) scanLoot() []string {
@@ -373,7 +378,7 @@ func (m Model) View() string {
 		return m.viewHelp()
 	}
 
-	sess := m.mgr.Sessions()
+	sess := m.mgr.Snapshot().Sessions
 
 	// compute layout
 	w := m.width
@@ -420,7 +425,7 @@ func (m Model) boxStyle(p pane, w, h int) lipgloss.Style {
 	return base.Width(w).Height(h)
 }
 
-func (m Model) renderSessions(sess []*session.Session, w, h int) string {
+func (m Model) renderSessions(sess []session.SessionSnapshot, w, h int) string {
 	var b strings.Builder
 	b.WriteString(crimsonStyle.Render("SESSIONS") + "\n\n")
 	if len(sess) == 0 {
@@ -445,13 +450,13 @@ func (m Model) renderSessions(sess []*session.Session, w, h int) string {
 	return m.boxStyle(paneSessions, w, h).Render(b.String())
 }
 
-func (m Model) renderTasks(sess []*session.Session, w, h int) string {
+func (m Model) renderTasks(sess []session.SessionSnapshot, w, h int) string {
 	var b strings.Builder
 	b.WriteString(crimsonStyle.Render("TASKS") + "\n\n")
 	if len(sess) == 0 || m.selected >= len(sess) {
 		b.WriteString(ashStyle.Render("(no session selected)"))
 	} else {
-		tasks := sess[m.selected].Tasks()
+		tasks := sess[m.selected].Tasks
 		if len(tasks) == 0 {
 			b.WriteString(ashStyle.Render("(no tasks yet)"))
 		}
@@ -621,12 +626,12 @@ func (m Model) viewHelp() string {
 // clampSessCursor keeps sessCursor inside the currently-selected session's
 // task list after the sessions cursor moves.
 func (m *Model) clampSessCursor() {
-	sess := m.mgr.Sessions()
+	sess := m.mgr.Snapshot().Sessions
 	if m.selected >= len(sess) {
 		m.sessCursor = 0
 		return
 	}
-	n := len(sess[m.selected].Tasks())
+	n := len(sess[m.selected].Tasks)
 	if m.sessCursor >= n {
 		if n == 0 {
 			m.sessCursor = 0

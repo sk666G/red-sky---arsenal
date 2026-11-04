@@ -71,7 +71,7 @@ func csFor() *crypto.Session {
 // session's tear-down path.
 func TestRegisterDuplicateKeepsNewSession(t *testing.T) {
 	m := NewManager()
-	defer close(m.Events)
+	defer m.Close()
 
 	conn1 := newFakeConn()
 	conn2 := newFakeConn()
@@ -94,7 +94,7 @@ func TestRegisterDuplicateKeepsNewSession(t *testing.T) {
 // --- Invariant 2: close() is idempotent ---
 func TestSessionCloseIdempotent(t *testing.T) {
 	m := NewManager()
-	defer close(m.Events)
+	defer m.Close()
 	conn := newFakeConn()
 	s := m.Register("agent-1", proto.AgentInfo{}, conn, csFor())
 
@@ -112,7 +112,7 @@ func TestSessionCloseIdempotent(t *testing.T) {
 // Test pins the set; ordering is a TODO for pass 2.
 func TestSessionsSet(t *testing.T) {
 	m := NewManager()
-	defer close(m.Events)
+	defer m.Close()
 	for _, id := range []string{"b", "a", "c"} {
 		m.Register(id, proto.AgentInfo{}, newFakeConn(), csFor())
 	}
@@ -136,7 +136,7 @@ func TestSessionsSet(t *testing.T) {
 // Same root cause as #1, tested directly on the reader path.
 func TestReaderLoopReapsOwnSessionOnly(t *testing.T) {
 	m := NewManager()
-	defer close(m.Events)
+	defer m.Close()
 
 	conn1 := newFakeConn()
 	s1 := m.Register("agent-1", proto.AgentInfo{}, conn1, csFor())
@@ -163,7 +163,7 @@ func TestReaderLoopReapsOwnSessionOnly(t *testing.T) {
 // timeout to fail fast.
 func TestSendAfterCloseDoesNotBlock(t *testing.T) {
 	m := NewManager()
-	defer close(m.Events)
+	defer m.Close()
 	conn := newFakeConn()
 	s := m.Register("agent-1", proto.AgentInfo{}, conn, csFor())
 
@@ -187,7 +187,7 @@ func TestSendAfterCloseDoesNotBlock(t *testing.T) {
 // --- Invariant 6: GetCaptureChannel unknown session returns nil ---
 func TestGetCaptureChannelUnknown(t *testing.T) {
 	m := NewManager()
-	defer close(m.Events)
+	defer m.Close()
 	s := m.Register("agent-1", proto.AgentInfo{}, newFakeConn(), csFor())
 
 	ch := s.GetCaptureChannel("does-not-exist")
@@ -205,7 +205,7 @@ var _ net.Conn = (*fakeConn)(nil)
 // the live Manager — a TUI reading it can't race a concurrent beacon.
 func TestSnapshotIsDetached(t *testing.T) {
 	m := NewManager()
-	defer close(m.Events)
+	defer m.Close()
 	s := m.Register("agent-1", proto.AgentInfo{Hostname: "h1"}, newFakeConn(), csFor())
 
 	// put one task in flight
@@ -245,7 +245,7 @@ func TestSnapshotIsDetached(t *testing.T) {
 // otherwise the TUI flickers on every tick.
 func TestSnapshotOrderStable(t *testing.T) {
 	m := NewManager()
-	defer close(m.Events)
+	defer m.Close()
 	for _, id := range []string{"z", "a", "m"} {
 		m.Register(id, proto.AgentInfo{}, newFakeConn(), csFor())
 		// tiny gap so LastSeen differs, but the sort fallback is AgentID

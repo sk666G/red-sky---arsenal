@@ -48,7 +48,7 @@ func (m *Model) executePlan() int {
 	if m.pendingPlan == nil || len(m.pendingPlan.Steps) == 0 {
 		return 0
 	}
-	sess := m.mgr.Sessions()
+	sess := m.mgr.Snapshot().Sessions
 	if len(sess) == 0 {
 		m.err = fmt.Errorf("no sessions connected")
 		return 0
@@ -61,7 +61,9 @@ func (m *Model) executePlan() int {
 	for _, step := range m.pendingPlan.Steps {
 		// Plan steps name a framework module (net_scanner, ics_scada, iot, ...).
 		// The agent dispatches these natively — no shell, no external binary.
-		target.SendKind("framework", step.Module, step.Args, 300)
+		if live, ok := m.mgr.Get(target.AgentID); ok {
+			live.SendKind("framework", step.Module, step.Args, 300)
+		}
 		n++
 		m.emitEvent("plan", target.AgentID, "queued "+step.Module+" "+strings.Join(step.Args, " "))
 	}
