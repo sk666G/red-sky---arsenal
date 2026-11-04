@@ -36,6 +36,7 @@ import (
 	"github.com/sk666G/red-sky---arsenal/internal/recon2"
 	"github.com/sk666G/red-sky---arsenal/internal/scanner"
 	"github.com/sk666G/red-sky---arsenal/internal/session"
+	"github.com/sk666G/red-sky---arsenal/internal/socialgo"
 	rsTLS "github.com/sk666G/red-sky---arsenal/internal/tls"
 	"github.com/sk666G/red-sky---arsenal/internal/tui"
 	"github.com/sk666G/red-sky---arsenal/internal/tunnel"
@@ -2554,6 +2555,51 @@ func registerDataSink(mgr *session.Manager) {
 				b, _ := json.Marshal(raw)
 				engDB.AddFinding(engagement.Finding{Module: "web:render", Kind: string(env.Type), Data: b})
 			}
+			return true
+
+		case proto.TypeSocialData:
+			var d proto.SocialData
+			if err := json.Unmarshal(env.Payload, &d); err != nil {
+				log.Printf("[social] decode: %v", err)
+				return true
+			}
+			if d.Done {
+				log.Printf("[social] done")
+				return true
+			}
+			if engDB != nil {
+				raw, _ := json.Marshal(d)
+				engDB.AddFinding(engagement.Finding{Module: "social:" + d.Stage, Kind: "social-event", Data: raw})
+			}
+			classified := socialgo.ClassifySocial(d)
+			if len(classified) > 0 && engDB != nil {
+				hostID, err := engDB.UpsertHost(engagement.Host{IP: "social-target"})
+				if err != nil {
+					log.Printf("[social] upsert: %v", err)
+				} else {
+					for _, v := range classified {
+						engDB.AddVuln(engagement.Vuln{HostID: hostID, Name: v.Name, Severity: v.Severity, Evidence: v.Evidence})
+					}
+					log.Printf("[social] %s — %d vuln(s)", d.Stage, len(classified))
+				}
+			}
+			return true
+
+		case proto.TypeShellcodeData:
+			var d proto.ShellcodeData
+			if err := json.Unmarshal(env.Payload, &d); err != nil {
+				log.Printf("[shellcode] decode: %v", err)
+				return true
+			}
+			if d.Done {
+				return true
+			}
+			// Shellcode generator: payload artifact, not a vuln. Finding only.
+			if engDB != nil {
+				raw, _ := json.Marshal(d)
+				engDB.AddFinding(engagement.Finding{Module: "shellcode", Kind: "shellcode-gen", Data: raw})
+			}
+			log.Printf("[shellcode] %s size=%d", d.Label, d.Size)
 			return true
 
 		}

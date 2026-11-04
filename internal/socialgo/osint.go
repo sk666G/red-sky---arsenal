@@ -74,9 +74,9 @@ type PlatformHit struct {
 
 // UsernameOptions controls a username enumeration.
 type UsernameOptions struct {
-	User      string
-	Timeout   time.Duration // per request; default 8s
-	Threads   int           // default 10
+	User    string
+	Timeout time.Duration // per request; default 8s
+	Threads int           // default 10
 }
 
 // checkPlatform hits one platform and reports whether it matched.
@@ -176,10 +176,10 @@ func EnumerateUsername(ctx context.Context, opts UsernameOptions,
 
 // GravatarResult is the outcome of a gravatar lookup.
 type GravatarResult struct {
-	Hash    string
-	URL     string
-	Found   bool
-	Body    string
+	Hash  string
+	URL   string
+	Found bool
+	Body  string
 }
 
 // Gravatar looks up a profile by email. If the email has a gravatar, the
