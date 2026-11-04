@@ -2602,6 +2602,23 @@ func registerDataSink(mgr *session.Manager) {
 			log.Printf("[shellcode] %s size=%d", d.Label, d.Size)
 			return true
 
+		case proto.TypeDroneData:
+			var d proto.DroneData
+			if err := json.Unmarshal(env.Payload, &d); err != nil {
+				log.Printf("[drone] decode: %v", err)
+				return true
+			}
+			if d.Done {
+				return true
+			}
+			// Drone frame decode: captured frames, not vuln. Finding only.
+			if engDB != nil {
+				raw, _ := json.Marshal(d)
+				engDB.AddFinding(engagement.Finding{Module: "drone", Kind: "drone-frames", Data: raw})
+			}
+			log.Printf("[drone] %d frame(s)", len(d.Frames))
+			return true
+
 		}
 		return false
 	})
