@@ -941,6 +941,13 @@ var (
 // runIoTCreds drives a default-credential spray on the agent. Streams
 // every attempt back over the tunnel — hits flagged OK, misses flagged !OK.
 // Called via proto.TypeIoTCredsStart.
+// DORMANT as of v3.2.0-alpha.96.1. The live path for iotcreds is
+// now agentfw.Dispatch("iotcreds", args) via Kind=framework. This
+// per-type wire handler is still reachable if a caller sends
+// proto.TypeIoTCredsStart, but the operator CLI no longer does.
+// It streams per-hit progress via TypeIoTCredsData; the framework
+// adapter currently returns a single buffered Result. Delete this
+// handler once the framework dispatcher supports streaming.
 func runIoTCreds(conn net.Conn, sess *crypto.Session, ic proto.IoTCredsStart) {
 	send := func(hit iotcreds.Hit, idx, total int, ok, done bool, errStr string) {
 		sendTunnelAck(conn, sess, proto.TypeIoTCredsData, proto.IoTCredsData{
@@ -1152,6 +1159,13 @@ func runIcsDNP3(ctx context.Context, ic proto.IcsStart, send func(string, string
 
 // runCloud drives a cloud-provider operation on the agent. Dispatches by
 // Action to the appropriate cloudgo primitive, streams CloudData.
+// DORMANT as of v3.2.0-alpha.97. The live path for cloud is
+// now agentfw.Dispatch("cloud", [json]) via Kind=framework. This
+// per-type wire handler is still reachable if a caller sends
+// proto.TypeCloudStart, but the operator CLI no longer does.
+// It streams per-stage progress via TypeCloudData; the framework
+// adapter currently returns a single buffered Result. Delete this
+// handler once the framework dispatcher supports streaming.
 func runCloud(conn net.Conn, sess *crypto.Session, c proto.CloudStart) {
 	send := func(stage, msg, detail string, ok, done bool) {
 		sendTunnelAck(conn, sess, proto.TypeCloudData, proto.CloudData{
