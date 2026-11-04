@@ -47,7 +47,7 @@ and got a status code back*. Nothing is overstated.
 
 ## Operator surfaces
 
-Three ways to read the engagement DB after a session:
+Four ways to read the engagement DB after a session:
 
 **TUI (default)** — `redsky-core` with no flags opens the operator
 console. The engagement pane sits between the events box and the prompt:
@@ -64,6 +64,16 @@ public `engagement.DB` API — no SQL.
 **Report renderer** — `redsky-core -report-from-db -report-title "..."
 -report-out <path>` renders a full markdown report from the engagement
 DB, core-side, no agent needed. Same table the TUI reads.
+
+**Browser panel** — `redsky-panel -addr 127.0.0.1:8080` starts a small
+HTTP server that reads the same DB. `GET /` serves a server-rendered
+HTML page: hosts/vulns/findings counts, per-severity color coding, and
+the top-20 vulns sorted by severity. `GET /api/stats` serves the same
+data as JSON for scripting. Local-only by default, no auth layer —
+binding to a network interface is a deliberate operator decision.
+
+Four reader surfaces, one table. Every one above reads the same rows
+the sink cases write. None of them write.
 
 ## Modules
 
