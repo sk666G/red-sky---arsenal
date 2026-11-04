@@ -12,7 +12,7 @@ import (
 // --- Invariant 1: New() returns a sane model ---
 func TestNewModelDefaults(t *testing.T) {
 	mgr := session.NewManager()
-	defer close(mgr.Events)
+	defer mgr.Close()
 
 	m := New(mgr, "test-engagement", 4444, nil)
 
@@ -35,7 +35,7 @@ func TestNewModelDefaults(t *testing.T) {
 // in well under the tick interval.
 func TestTickDoesNotBlock(t *testing.T) {
 	mgr := session.NewManager()
-	defer close(mgr.Events)
+	defer mgr.Close()
 
 	m := New(mgr, "test", 4444, nil)
 	m.width, m.height = 80, 24
@@ -56,7 +56,7 @@ func TestTickDoesNotBlock(t *testing.T) {
 // --- Invariant 3: printable keys accumulate into the input buffer ---
 func TestKeyRunesGoIntoInput(t *testing.T) {
 	mgr := session.NewManager()
-	defer close(mgr.Events)
+	defer mgr.Close()
 
 	m := New(mgr, "test", 4444, nil)
 	m.width, m.height = 80, 24

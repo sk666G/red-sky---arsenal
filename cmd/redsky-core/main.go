@@ -279,6 +279,7 @@ func main() {
 			os.Exit(2)
 		}
 		mgr := session.NewManager()
+		defer mgr.Close()
 		var raw []byte
 		if *moduleArgs != "" {
 			raw = []byte(*moduleArgs)
