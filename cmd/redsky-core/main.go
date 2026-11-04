@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -249,6 +250,7 @@ func main() {
 	reportFindings := flag.String("report-findings", "", "path to a JSON array of findings")
 	reportOut := flag.String("report-out", "", "output path (default: /tmp/redsky_report_<ts>.md)")
 	reportFromDB := flag.Bool("report-from-db", false, "render a report from the engagement DB (core-side, no agent)")
+	engagementStats := flag.Bool("engagement-stats", false, "print engagement DB summary (host/vuln/finding counts) and exit")
 	webReqURL := flag.String("webreq", "", "send a raw HTTP request via the first agent")
 	webReqMethod := flag.String("webreq-method", "GET", "HTTP method")
 	webReqBody := flag.String("webreq-body", "", "request body (string)")
@@ -340,6 +342,12 @@ func main() {
 	}
 	defer db.Close()
 	engDB = db
+	if *engagementStats {
+		if err := printEngagementStats(db); err != nil {
+			log.Fatalf("-engagement-stats: %v", err)
+		}
+		return
+	}
 	fmt.Printf("engagement DB: %s\n", db.Path())
 	registerDataSink(mgr)
 
@@ -2723,4 +2731,83 @@ func hostFromURL(raw string) string {
 		return ""
 	}
 	return u.Hostname()
+}
+
+// printEngagementStats prints a summary of the engagement DB: host
+// count, vuln count by severity, finding count, and the top ten
+// vulns sorted by severity then name. Uses only public DB API —
+// aggregation happens in memory from Hosts() + Vulns(hostID).
+func printEngagementStats(db *engagement.DB) error {
+	hosts, err := db.Hosts()
+	if err != nil {
+		return fmt.Errorf("hosts: %w", err)
+	}
+
+	sevRank := map[string]int{
+		"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4,
+	}
+	sevCount := map[string]int{}
+	var allVulns []struct {
+		sev  string
+		name string
+		host string
+	}
+	totalVulns := 0
+	for _, h := range hosts {
+		vulns, err := db.Vulns(h.ID)
+		if err != nil {
+			return fmt.Errorf("vulns host %d: %w", h.ID, err)
+		}
+		for _, v := range vulns {
+			sev := v.Severity
+			if sev == "" {
+				sev = "info"
+			}
+			sevCount[sev]++
+			totalVulns++
+			allVulns = append(allVulns, struct {
+				sev  string
+				name string
+				host string
+			}{sev, v.Name, h.IP})
+		}
+	}
+
+	findings, err := db.Findings("")
+	if err != nil {
+		return fmt.Errorf("findings: %w", err)
+	}
+
+	fmt.Printf("engagement db: %s\n", db.Path())
+	fmt.Printf("hosts:         %d\n", len(hosts))
+	fmt.Printf("vulns:         %d\n", totalVulns)
+	for _, s := range []string{"critical", "high", "medium", "low", "info"} {
+		if n := sevCount[s]; n > 0 {
+			fmt.Printf("  %-9s %d\n", s+":", n)
+		}
+	}
+	fmt.Printf("findings:      %d\n", len(findings))
+
+	if totalVulns == 0 {
+		fmt.Println("top vulns:     (none)")
+		return nil
+	}
+
+	sort.Slice(allVulns, func(i, j int) bool {
+		ri, rj := sevRank[allVulns[i].sev], sevRank[allVulns[j].sev]
+		if ri != rj {
+			return ri < rj
+		}
+		return allVulns[i].name < allVulns[j].name
+	})
+
+	fmt.Println("top vulns:")
+	limit := 10
+	if len(allVulns) < limit {
+		limit = len(allVulns)
+	}
+	for _, v := range allVulns[:limit] {
+		fmt.Printf("  [%-8s] %s — %s\n", v.sev, v.name, v.host)
+	}
+	return nil
 }
