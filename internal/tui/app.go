@@ -79,12 +79,15 @@ type Model struct {
 
 	// Engagement pane state — populated by loadEngagementCmd on Init
 	// and refreshed on tick. Read-only views from the DB.
-	engHosts  []engagement.Host
-	engVulns  []engagement.Vuln
-	engLoaded bool
-	engErr    string
-	port      int
-	started   time.Time
+	engHosts       []engagement.Host
+	engVulns       []engagement.Vuln
+	engLoaded      bool
+	engErr         string
+	engCursor      int  // selected vuln row in the engagement pane
+	engDetailShown bool // engagement vuln detail modal
+	engDetailVuln  *engagement.Vuln
+	port           int
+	started        time.Time
 
 	selected int // session index
 
@@ -312,6 +315,11 @@ func (m *Model) cursorUp() {
 		if m.selected > 0 {
 			m.selected--
 			m.clampSessCursor()
+
+			// engagement pane cursor
+			if m.focus == paneEngagement && m.engCursor > 0 {
+				m.engCursor--
+			}
 		}
 	case paneTasks:
 		if m.sessCursor > 0 {
@@ -328,6 +336,17 @@ func (m *Model) cursorDown() {
 		if m.selected < len(m.mgr.Snapshot().Sessions)-1 {
 			m.selected++
 			m.clampSessCursor()
+
+			// engagement pane cursor
+			if m.focus == paneEngagement {
+				max := 10
+				if len(m.engVulns) < max {
+					max = len(m.engVulns)
+				}
+				if m.engCursor < max-1 {
+					m.engCursor++
+				}
+			}
 		}
 	case paneTasks:
 		sess := m.mgr.Snapshot().Sessions
@@ -686,7 +705,7 @@ func (m Model) renderEngagement(w, h int) string {
 	if len(vulns) < max {
 		max = len(vulns)
 	}
-	for _, v := range vulns[:max] {
+	for i, v := range vulns[:max] {
 		sevTag := v.Severity
 		if sevTag == "" {
 			sevTag = "info"
@@ -698,7 +717,11 @@ func (m Model) renderEngagement(w, h int) string {
 		case "medium":
 			style = warnStyle
 		}
-		b.WriteString(style.Render(fmt.Sprintf("[%-8s] %s", sevTag, v.Name)) + "\n")
+		marker := "  "
+		if m.focus == paneEngagement && i == m.engCursor {
+			marker = selectedStyle.Render("> ")
+		}
+		b.WriteString(marker + style.Render(fmt.Sprintf("[%-8s] %s", sevTag, v.Name)) + "\n")
 	}
 	return m.boxStyle(paneEngagement, w, h).Render(b.String())
 }
@@ -733,6 +756,43 @@ func (m Model) viewDetail() string {
 	}
 	b.WriteString("\n" + ashStyle.Render("esc close"))
 	return borderStyle.Width(m.width - 4).Render(b.String())
+}
+
+func (m Model) viewEngagementDetail() string {
+	v := m.engDetailVuln
+	if v == nil {
+		return ashStyle.Render("(no vuln selected)")
+	}
+	var b strings.Builder
+	b.WriteString(crimsonStyle.Render("VULN DETAIL") + "\n\n")
+	b.WriteString(boneStyle.Render("Name:     ") + m.engDetailNameStyle(v.Severity).Render(v.Name) + "\n")
+	b.WriteString(boneStyle.Render("Severity: ") + m.engDetailNameStyle(v.Severity).Render(v.Severity) + "\n")
+	b.WriteString(boneStyle.Render(fmt.Sprintf("HostID:   %d\n", v.HostID)))
+	if v.ServiceID != 0 {
+		b.WriteString(boneStyle.Render(fmt.Sprintf("Service:  %d\n", v.ServiceID)))
+	}
+	if v.Evidence != "" {
+		b.WriteString("\n")
+		b.WriteString(crimsonStyle.Render("EVIDENCE") + "\n")
+		for _, line := range strings.Split(v.Evidence, "\n") {
+			b.WriteString(ashStyle.Render(line) + "\n")
+		}
+	}
+	b.WriteString("\n")
+	b.WriteString(ashStyle.Render("[esc] back to engagement"))
+	return borderStyle.Width(m.width-4).Padding(1, 2).Render(b.String())
+}
+
+func (m Model) engDetailNameStyle(sev string) lipgloss.Style {
+	switch sev {
+	case "critical", "high":
+		return crimsonStyle
+	case "medium":
+		return warnStyle
+	case "low", "info":
+		return okStyle
+	}
+	return boneStyle
 }
 
 func (m Model) viewHelp() string {
