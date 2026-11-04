@@ -27,6 +27,7 @@ import (
 	"github.com/sk666G/red-sky---arsenal/internal/crypto"
 	"github.com/sk666G/red-sky---arsenal/internal/dnsexfil"
 	"github.com/sk666G/red-sky---arsenal/internal/engagement"
+	"github.com/sk666G/red-sky---arsenal/internal/icsgo"
 	"github.com/sk666G/red-sky---arsenal/internal/planner"
 	"github.com/sk666G/red-sky---arsenal/internal/plugin"
 	"github.com/sk666G/red-sky---arsenal/internal/proto"
@@ -2352,6 +2353,59 @@ func registerDataSink(mgr *session.Manager) {
 				summary = v[0] + " " + d.DN
 			}
 			log.Printf("[adenum %s] %s", d.Action, summary)
+			return true
+
+		case proto.TypeIcsData:
+			var d proto.IcsData
+			if err := json.Unmarshal(env.Payload, &d); err != nil {
+				log.Printf("[ics] decode: %v", err)
+				return true
+			}
+			// Terminal marker, error, or empty — claim + log, no DB write
+			if d.Done || !d.OK || d.Host == "" {
+				if d.Done {
+					log.Printf("[ics %s] %s done", d.Protocol, d.Host)
+				} else if d.Message != "" {
+					log.Printf("[ics %s] %s: %s", d.Protocol, d.Host, d.Message)
+				}
+				return true
+			}
+			// Raw finding always: the full IcsData response, for evidence.
+			if engDB != nil {
+				raw, err := json.Marshal(d)
+				if err == nil {
+					if _, err := engDB.AddFinding(engagement.Finding{
+						Module: "ics:" + d.Protocol,
+						Kind:   "ics-response",
+						Data:   raw,
+					}); err != nil {
+						log.Printf("[ics] finding DB: %v", err)
+					}
+				}
+			}
+			// Classify → vulns against the real host IP.
+			classified := icsgo.ClassifyIcsData(d)
+			if len(classified) > 0 && engDB != nil {
+				hostID, err := engDB.UpsertHost(engagement.Host{IP: d.Host})
+				if err != nil {
+					log.Printf("[ics] upsert host %s: %v", d.Host, err)
+				} else {
+					for _, v := range classified {
+						if _, err := engDB.AddVuln(engagement.Vuln{
+							HostID:   hostID,
+							Name:     v.Name,
+							Severity: v.Severity,
+							Evidence: v.Evidence,
+						}); err != nil {
+							log.Printf("[ics] add vuln %q: %v", v.Name, err)
+						}
+					}
+					log.Printf("[ics %s] %s — %d vuln(s)", d.Protocol, d.Host, len(classified))
+				}
+			} else {
+				// No vuln classified — still log the response for visibility
+				log.Printf("[ics %s] %s %s", d.Protocol, d.Host, d.Stage)
+			}
 			return true
 		}
 		return false
