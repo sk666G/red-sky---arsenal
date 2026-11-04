@@ -14,7 +14,7 @@ func TestNewModelDefaults(t *testing.T) {
 	mgr := session.NewManager()
 	defer mgr.Close()
 
-	m := New(mgr, "test-engagement", 4444, nil)
+	m := New(mgr, nil, "test-engagement", 4444, nil)
 
 	if m.mgr != mgr {
 		t.Fatalf("mgr not wired")
@@ -37,7 +37,7 @@ func TestTickDoesNotBlock(t *testing.T) {
 	mgr := session.NewManager()
 	defer mgr.Close()
 
-	m := New(mgr, "test", 4444, nil)
+	m := New(mgr, nil, "test", 4444, nil)
 	m.width, m.height = 80, 24
 
 	done := make(chan struct{})
@@ -58,7 +58,7 @@ func TestKeyRunesGoIntoInput(t *testing.T) {
 	mgr := session.NewManager()
 	defer mgr.Close()
 
-	m := New(mgr, "test", 4444, nil)
+	m := New(mgr, nil, "test", 4444, nil)
 	m.width, m.height = 80, 24
 
 	m2, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("whoami")})

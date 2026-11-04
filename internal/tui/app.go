@@ -26,6 +26,7 @@ var (
 	ashStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("#787878"))
 	okStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("#50C850"))
 	errStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF2400"))
+	warnStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#DAA520"))
 	borderStyle   = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#8B0000"))
 	selectedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF2400")).Bold(true)
 	promptStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#DC143C")).Bold(true)
@@ -47,6 +48,7 @@ const (
 	paneLoot
 	paneEvents
 	panePrompt
+	paneEngagement
 	paneCount
 )
 
@@ -62,6 +64,8 @@ func (p pane) String() string {
 		return "events"
 	case panePrompt:
 		return "prompt"
+	case paneEngagement:
+		return "engagement"
 	}
 	return "?"
 }
@@ -72,8 +76,15 @@ type Model struct {
 	mgr        *session.Manager
 	db         *engagement.DB
 	engagement string
-	port       int
-	started    time.Time
+
+	// Engagement pane state — populated by loadEngagementCmd on Init
+	// and refreshed on tick. Read-only views from the DB.
+	engHosts  []engagement.Host
+	engVulns  []engagement.Vuln
+	engLoaded bool
+	engErr    string
+	port      int
+	started   time.Time
 
 	selected int // session index
 
@@ -127,15 +138,56 @@ func New(mgr *session.Manager, db *engagement.DB, engagement string, port int, p
 }
 
 func (m Model) Init() tea.Cmd {
-	return tick()
+	return tea.Batch(tick(), m.loadEngagementCmd())
 }
 
 func tick() tea.Cmd {
 	return tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg { return tickMsg(t) })
 }
 
+// engagementLoadedMsg carries the results of a DB read into the
+// engagement pane. Issued by loadEngagementCmd.
+type engagementLoadedMsg struct {
+	hosts []engagement.Host
+	vulns []engagement.Vuln
+	err   error
+}
+
+// loadEngagementCmd reads hosts + per-host vulns from the engagement
+// DB. Returns nil if no DB is attached (TUI running without -engagement).
+func (m Model) loadEngagementCmd() tea.Cmd {
+	if m.db == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		hosts, err := m.db.Hosts()
+		if err != nil {
+			return engagementLoadedMsg{err: err}
+		}
+		var allVulns []engagement.Vuln
+		for _, h := range hosts {
+			vs, err := m.db.Vulns(h.ID)
+			if err != nil {
+				return engagementLoadedMsg{err: err}
+			}
+			allVulns = append(allVulns, vs...)
+		}
+		return engagementLoadedMsg{hosts: hosts, vulns: allVulns}
+	}
+}
+
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case engagementLoadedMsg:
+		if msg.err != nil {
+			m.engErr = msg.err.Error()
+		} else {
+			m.engHosts = msg.hosts
+			m.engVulns = msg.vulns
+			m.engLoaded = true
+			m.engErr = ""
+		}
+		return m, nil
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -409,12 +461,14 @@ func (m Model) View() string {
 	topRow := lipgloss.JoinHorizontal(lipgloss.Top, sessionsPane, tasksPane, lootPane)
 
 	eventsBox := m.renderEvents(w-2, 8)
+	engBox := m.renderEngagement(w-2, 6)
 	promptBox := m.renderPrompt(w - 2)
 	statusBox := m.renderStatus(w-2, len(sess))
 
 	return lipgloss.JoinVertical(lipgloss.Left,
 		topRow,
 		eventsBox,
+		engBox,
 		promptBox,
 		statusBox,
 	)
@@ -564,6 +618,89 @@ func (m Model) renderStatus(w int, nSess int) string {
 		pad = 1
 	}
 	return ashStyle.Render(left + strings.Repeat(" ", pad) + right)
+}
+
+func (m Model) renderEngagement(w, h int) string {
+	var b strings.Builder
+	b.WriteString(crimsonStyle.Render("ENGAGEMENT") + "\n")
+
+	if m.db == nil {
+		b.WriteString(ashStyle.Render("(no engagement DB open)") + "\n")
+		return m.boxStyle(paneEngagement, w, h).Render(b.String())
+	}
+	if m.engErr != "" {
+		b.WriteString(errStyle.Render("db: "+m.engErr) + "\n")
+		return m.boxStyle(paneEngagement, w, h).Render(b.String())
+	}
+	if !m.engLoaded {
+		b.WriteString(ashStyle.Render("loading...") + "\n")
+		return m.boxStyle(paneEngagement, w, h).Render(b.String())
+	}
+
+	// Severity counts
+	sev := map[string]int{}
+	for _, v := range m.engVulns {
+		s := v.Severity
+		if s == "" {
+			s = "info"
+		}
+		sev[s]++
+	}
+	summary := fmt.Sprintf("hosts: %d  vulns: %d", len(m.engHosts), len(m.engVulns))
+	if sev["critical"] > 0 {
+		summary += "  " + errStyle.Render(fmt.Sprintf("C:%d", sev["critical"]))
+	}
+	if sev["high"] > 0 {
+		summary += "  " + crimsonStyle.Render(fmt.Sprintf("H:%d", sev["high"]))
+	}
+	if sev["medium"] > 0 {
+		summary += "  " + warnStyle.Render(fmt.Sprintf("M:%d", sev["medium"]))
+	}
+	b.WriteString(boneStyle.Render(summary) + "\n")
+
+	if len(m.engVulns) == 0 {
+		b.WriteString(ashStyle.Render("(no vulns yet)") + "\n")
+		return m.boxStyle(paneEngagement, w, h).Render(b.String())
+	}
+
+	// Sort by severity rank, cap at h-3 rows
+	rank := map[string]int{"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+	vulns := make([]engagement.Vuln, len(m.engVulns))
+	copy(vulns, m.engVulns)
+	sort.SliceStable(vulns, func(i, j int) bool {
+		rvi, ok := rank[vulns[i].Severity]
+		if !ok {
+			rvi = 99
+		}
+		rvj, ok := rank[vulns[j].Severity]
+		if !ok {
+			rvj = 99
+		}
+		return rvi < rvj
+	})
+
+	max := h - 3
+	if max < 1 {
+		max = 1
+	}
+	if len(vulns) < max {
+		max = len(vulns)
+	}
+	for _, v := range vulns[:max] {
+		sevTag := v.Severity
+		if sevTag == "" {
+			sevTag = "info"
+		}
+		style := ashStyle
+		switch v.Severity {
+		case "critical", "high":
+			style = crimsonStyle
+		case "medium":
+			style = warnStyle
+		}
+		b.WriteString(style.Render(fmt.Sprintf("[%-8s] %s", sevTag, v.Name)) + "\n")
+	}
+	return m.boxStyle(paneEngagement, w, h).Render(b.String())
 }
 
 func (m Model) viewDetail() string {
