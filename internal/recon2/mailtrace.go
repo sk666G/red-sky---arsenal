@@ -30,21 +30,21 @@ type MailTrace struct {
 	Date          string    `json:"date,omitempty"`
 	MessageID     string    `json:"message_id,omitempty"`
 	Received      []RecvHop `json:"received,omitempty"`
-	AuthResults   []string  `json:"auth_results,omitempty"`   // Authentication-Results header lines
-	ReceivedSPF   string    `json:"received_spf,omitempty"`   // Received-SPF header if present
+	AuthResults   []string  `json:"auth_results,omitempty"` // Authentication-Results header lines
+	ReceivedSPF   string    `json:"received_spf,omitempty"` // Received-SPF header if present
 	DKIMSignature []string  `json:"dkim_signatures,omitempty"`
-	Suspect       []string  `json:"suspects,omitempty"`       // heuristic flags
+	Suspect       []string  `json:"suspects,omitempty"` // heuristic flags
 	OriginIP      string    `json:"origin_ip,omitempty"`
 }
 
 // RecvHop is one hop in the Received chain.
 type RecvHop struct {
-	Index int    `json:"index"`           // 0 = most recent
+	Index int    `json:"index"` // 0 = most recent
 	Raw   string `json:"raw,omitempty"`
-	From  string `json:"from,omitempty"`  // "from" clause
-	By    string `json:"by,omitempty"`    // "by" clause
-	IP    string `json:"ip,omitempty"`    // bracketed ip if present
-	When  string `json:"when,omitempty"`  // date portion
+	From  string `json:"from,omitempty"` // "from" clause
+	By    string `json:"by,omitempty"`   // "by" clause
+	IP    string `json:"ip,omitempty"`   // bracketed ip if present
+	When  string `json:"when,omitempty"` // date portion
 }
 
 // ParseMailFile reads an .eml file and runs the analysis.
@@ -141,7 +141,8 @@ func splitAddrList(s string) []string {
 // parseReceived parses one Received: header into hop parts.
 //
 // Format (RFC 5321 §4.4) is freeform, but a common shape is:
-//   from <host> (<helo> [<ip>]) by <host> with <proto> id <id>; <date>
+//
+//	from <host> (<helo> [<ip>]) by <host> with <proto> id <id>; <date>
 var (
 	recvFromRe = regexp.MustCompile(`(?i)from\s+([^\s;]+)`)
 	recvByRe   = regexp.MustCompile(`(?i)by\s+([^\s;]+)`)

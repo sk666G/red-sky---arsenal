@@ -30,10 +30,10 @@ import (
 
 // ProxyHop describes one SOCKS5 endpoint.
 type ProxyHop struct {
-	Host     string
-	Port     int
-	User     string // empty = no auth
-	Pass     string
+	Host string
+	Port int
+	User string // empty = no auth
+	Pass string
 }
 
 // ChainOptions controls chain dialing.

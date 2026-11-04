@@ -28,11 +28,11 @@ type ForensicsOptions struct {
 
 // ForensicsResult is one action's outcome.
 type ForensicsResult struct {
-	Action   string `json:"action"`
-	Target   string `json:"target,omitempty"`
-	OK       bool   `json:"ok"`
-	Detail   string `json:"detail,omitempty"`
-	Err      string `json:"error,omitempty"`
+	Action string `json:"action"`
+	Target string `json:"target,omitempty"`
+	OK     bool   `json:"ok"`
+	Detail string `json:"detail,omitempty"`
+	Err    string `json:"error,omitempty"`
 }
 
 // LogShippingStop stops common log-forwarding services. On Linux this

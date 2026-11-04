@@ -24,13 +24,13 @@ type IfaceInfo struct {
 
 // HostInfo is the whole local picture.
 type HostInfo struct {
-	Hostname  string            `json:"hostname"`
-	GOOS      string            `json:"goos"`
-	GOARCH    string            `json:"goarch"`
-	Interfaces []IfaceInfo      `json:"interfaces"`
-	Gateway   string            `json:"gateway,omitempty"`
-	DNSServers []string         `json:"dns_servers,omitempty"`
-	Routes    []RouteEntry      `json:"routes,omitempty"`
+	Hostname   string       `json:"hostname"`
+	GOOS       string       `json:"goos"`
+	GOARCH     string       `json:"goarch"`
+	Interfaces []IfaceInfo  `json:"interfaces"`
+	Gateway    string       `json:"gateway,omitempty"`
+	DNSServers []string     `json:"dns_servers,omitempty"`
+	Routes     []RouteEntry `json:"routes,omitempty"`
 }
 
 // RouteEntry is one route from the local routing table.

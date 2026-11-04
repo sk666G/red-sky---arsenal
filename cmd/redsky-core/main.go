@@ -2656,6 +2656,42 @@ func registerDataSink(mgr *session.Manager) {
 			}
 			return true
 
+		case proto.TypeCCTVData:
+			var d proto.CCTVData
+			if err := json.Unmarshal(env.Payload, &d); err != nil {
+				log.Printf("[cctv] decode: %v", err)
+				return true
+			}
+			if d.Done || d.Error != "" {
+				if d.Done {
+					log.Printf("[cctv] done")
+				} else {
+					log.Printf("[cctv] %s", d.Error)
+				}
+				return true
+			}
+			if engDB != nil {
+				raw, _ := json.Marshal(d)
+				engDB.AddFinding(engagement.Finding{Module: "cctv", Kind: "cctv-event", Data: raw})
+			}
+			classified := recon2.ClassifyCCTV(d)
+			if len(classified) > 0 && engDB != nil {
+				host := hostFromURL(d.URL)
+				if host == "" {
+					host = "cctv-unknown"
+				}
+				hostID, err := engDB.UpsertHost(engagement.Host{IP: host})
+				if err != nil {
+					log.Printf("[cctv] upsert %s: %v", host, err)
+				} else {
+					for _, v := range classified {
+						engDB.AddVuln(engagement.Vuln{HostID: hostID, Name: v.Name, Severity: v.Severity, Evidence: v.Evidence})
+					}
+					log.Printf("[cctv] %s — %d vuln(s)", host, len(classified))
+				}
+			}
+			return true
+
 		}
 		return false
 	})
