@@ -1475,33 +1475,38 @@ type cloudArgs struct {
 }
 
 // runCloudDispatch waits for the first agent, fires a CloudStart.
+// runCloudDispatch sends cloud ops as a framework task with a JSON
+// args blob. cloud has 20+ fields across six action families, so
+// positional args don't fit — the adapter decodes JSON and dispatches
+// by action.
 func runCloudDispatch(mgr *session.Manager, a cloudArgs) {
 	for len(mgr.Sessions()) == 0 {
 		time.Sleep(500 * time.Millisecond)
 	}
 	s := mgr.Sessions()[0]
-	sessionID := fmt.Sprintf("cl-%d", time.Now().UnixNano())
 
 	log.Printf("[cloud] %s/%s -> %s", a.Action, a.Provider, s.AgentID)
 
-	req := proto.CloudStart{
-		SessionID:       sessionID,
-		Action:          a.Action,
-		Cloud:           a.Provider,
-		AccessKeyID:     a.KeyID,
-		SecretAccessKey: a.Secret,
-		SessionToken:    a.Token,
-		Region:          a.Region,
-		PolicySourceArn: a.Arn,
-		Driver:          a.Driver,
-		TargetUser:      a.User,
-		TargetGroup:     a.Group,
-		PolicyARN:       a.PolicyArn,
-		RoleARN:         a.RoleArn,
+	payload := map[string]any{
+		"action":     a.Action,
+		"provider":   a.Provider,
+		"key_id":     a.KeyID,
+		"secret":     a.Secret,
+		"token":      a.Token,
+		"region":     a.Region,
+		"arn":        a.Arn,
+		"driver":     a.Driver,
+		"user":       a.User,
+		"group":      a.Group,
+		"policy_arn": a.PolicyArn,
+		"role_arn":   a.RoleArn,
 	}
-	if err := s.SendCloudStart(sessionID, req); err != nil {
-		log.Printf("[cloud] start: %v", err)
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("[cloud] marshal: %v", err)
+		return
 	}
+	s.SendKind("framework", "cloud", []string{string(raw)}, 300)
 }
 
 // cryptoOpArgs carries the operator's -crypto-* op flags.
