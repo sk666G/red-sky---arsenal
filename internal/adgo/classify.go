@@ -20,6 +20,8 @@ const (
 	uacPasswdNotReq   = 0x0020   // 32     PASSWD_NOTREQD
 	uacDontExpirePwd  = 0x10000  // 65536  DONT_EXPIRE_PASSWORD
 	uacDontReqPreauth = 0x400000 // 4194304 DONT_REQ_PREAUTH
+
+	uacTrustedForDelegation = 0x80000 // TRUSTED_FOR_DELEGATION
 )
 
 // classifyMessage scans a free-form message for embedded hash markers.
@@ -135,6 +137,108 @@ func classifyEntry(e LDAPEntry) []ClassifiedVuln {
 				Severity: "medium",
 				Evidence: fmt.Sprintf("ms-DS-MachineAccountQuota=%d", n),
 			})
+		}
+	}
+
+	// Unconstrained delegation — TRUSTED_FOR_DELEGATION bit on a
+	// computer account. Coerced TGT can be relayed to a DC.
+	if uacStr := attrFirst(e.Attrs, "userAccountControl"); uacStr != "" {
+		if uac, err := strconv.Atoi(uacStr); err == nil && uac&uacTrustedForDelegation != 0 {
+			sam := attrFirst(e.Attrs, "samAccountName")
+			if sam == "" {
+				sam = e.DN
+			}
+			out = append(out, ClassifiedVuln{
+				Name:     "Unconstrained delegation (TRUSTED_FOR_DELEGATION)",
+				Severity: "high",
+				Evidence: fmt.Sprintf("%s uac=0x%x", sam, uac),
+			})
+		}
+	}
+
+	// LAPS-readable — ms-Mcs-AdmPwd (or LAPS v2 variant) attribute
+	// present in an entry we could read = local admin password.
+	for _, attr := range []string{"ms-Mcs-AdmPwd", "msLAPS-Password", "msLAPS-EncryptedPassword"} {
+		if pw := attrFirst(e.Attrs, attr); pw != "" {
+			sam := attrFirst(e.Attrs, "samAccountName", "name")
+			if sam == "" {
+				sam = e.DN
+			}
+			out = append(out, ClassifiedVuln{
+				Name:     "LAPS password readable (" + attr + ")",
+				Severity: "high",
+				Evidence: fmt.Sprintf("%s %s=%s", sam, attr, truncateStr(pw, 64)),
+			})
+			break
+		}
+	}
+
+	// Replicating Directory Changes — DCSync rights.
+	if sd := attrFirst(e.Attrs, "nTSecurityDescriptor"); sd != "" {
+		if strings.Contains(sd, "Replicating Directory Changes") ||
+			strings.Contains(sd, "1131f6ad-9c07-11d1-f79f-00c04fc2dcd2") ||
+			strings.Contains(sd, "1131f6aa-9c07-11d1-f79f-00c04fc2dcd2") {
+			sam := attrFirst(e.Attrs, "samAccountName", "name")
+			if sam == "" {
+				sam = e.DN
+			}
+			out = append(out, ClassifiedVuln{
+				Name:     "Replicating Directory Changes (DCSync rights)",
+				Severity: "critical",
+				Evidence: fmt.Sprintf("%s grants DCSync", sam),
+			})
+		}
+	}
+
+	// ADCS template / CA risks — AnalyzeTemplate and AnalyzeCA return
+	// Vulnerabilities []string (ESC1, ESC2, ...) and Notes []string.
+	// Fire one vuln per ESC class.
+	if objectClass := e.Attrs["objectClass"]; len(objectClass) > 0 {
+		isTemplate := false
+		isCA := false
+		for _, c := range objectClass {
+			if strings.EqualFold(c, "pKICertificateTemplate") {
+				isTemplate = true
+			}
+			if strings.EqualFold(c, "pKIEnrollmentService") {
+				isCA = true
+			}
+		}
+		if isTemplate {
+			risk := AnalyzeTemplate(e)
+			for _, esc := range risk.Vulnerabilities {
+				sev := "critical"
+				if esc == "ESC4" || esc == "ESC5" {
+					sev = "high"
+				}
+				notes := strings.Join(risk.Notes, "; ")
+				if len(notes) > 200 {
+					notes = notes[:200] + "…"
+				}
+				out = append(out, ClassifiedVuln{
+					Name:     "ADCS template — " + esc,
+					Severity: sev,
+					Evidence: fmt.Sprintf("%s %s", e.DN, notes),
+				})
+			}
+		}
+		if isCA {
+			caRisk := AnalyzeCA(e)
+			for _, esc := range caRisk.Vulnerabilities {
+				sev := "critical"
+				if esc == "ESC7" || esc == "ESC8" {
+					sev = "high"
+				}
+				notes := strings.Join(caRisk.Notes, "; ")
+				if len(notes) > 200 {
+					notes = notes[:200] + "…"
+				}
+				out = append(out, ClassifiedVuln{
+					Name:     "ADCS CA — " + esc,
+					Severity: sev,
+					Evidence: fmt.Sprintf("%s %s", e.DN, notes),
+				})
+			}
 		}
 	}
 
