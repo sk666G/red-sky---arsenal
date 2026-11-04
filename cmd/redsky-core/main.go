@@ -1345,19 +1345,35 @@ type iotCredsArgs struct {
 // runIoTCredsDispatch waits for the first agent, then fires an
 // IoTCredsStart over the existing tunnel. Attempts stream back as
 // IoTCredsData events.
+// runIoTCredsDispatch sends the spray as a framework task. Both the
+// per-module -iotcreds flag and the unified -module iotcreds door land
+// here, so both fire the same wire path: Kind=framework, Cmd=iotcreds,
+// agent-side agentfw.Dispatch routes it to the adapter that calls
+// iotcreds.Spray. The old SendIoTCredsStart path is dormant — it stays
+// reachable if a caller of the old wire type sends it, but the operator
+// CLI never does now.
+// runIoTCredsDispatch sends the spray as a framework task.
+// Both -iotcreds flag and -module iotcreds land here; both fire the
+// same wire path: Kind=framework, Cmd=iotcreds, agent-side
+// agentfw.Dispatch routes to the adapter that calls iotcreds.Spray.
 func runIoTCredsDispatch(mgr *session.Manager, a iotCredsArgs) {
 	for len(mgr.Sessions()) == 0 {
 		time.Sleep(500 * time.Millisecond)
 	}
 	s := mgr.Sessions()[0]
-	sessionID := fmt.Sprintf("ic-%d", time.Now().UnixNano())
 
 	log.Printf("[iotcreds] %s:%d/%s -> %s (first=%v)",
 		a.Host, a.Port, a.Protocol, s.AgentID, a.StopFirst)
 
-	if err := s.SendIoTCredsStart(sessionID, a.Host, a.Port, a.Protocol, a.Path, a.Timeout, a.StopFirst); err != nil {
-		log.Printf("[iotcreds] start: %v", err)
+	args := []string{
+		a.Host,
+		strconv.Itoa(a.Port),
+		a.Protocol,
+		a.Path,
+		strconv.Itoa(a.Timeout),
+		fmt.Sprintf("%v", a.StopFirst),
 	}
+	s.SendKind("framework", "iotcreds", args, 300)
 }
 
 // icsArgs carries the operator's -ics flags to the dispatcher.
