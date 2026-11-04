@@ -13,6 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/sk666G/red-sky---arsenal/internal/engagement"
 	"github.com/sk666G/red-sky---arsenal/internal/planner"
 	"github.com/sk666G/red-sky---arsenal/internal/session"
 )
@@ -69,6 +70,7 @@ func (p pane) String() string {
 
 type Model struct {
 	mgr        *session.Manager
+	db         *engagement.DB
 	engagement string
 	port       int
 	started    time.Time
@@ -103,12 +105,13 @@ type Model struct {
 }
 
 // New builds the TUI model bound to a session manager.
-func New(mgr *session.Manager, engagement string, port int, pl planner.Planner) Model {
+func New(mgr *session.Manager, db *engagement.DB, engagement string, port int, pl planner.Planner) Model {
 	if pl == nil {
 		pl = planner.RulePlanner{}
 	}
 	return Model{
 		mgr:        mgr,
+		db:         db,
 		engagement: engagement,
 		port:       port,
 		planner:    pl,

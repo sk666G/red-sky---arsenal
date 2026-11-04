@@ -25,6 +25,7 @@ import (
 	"github.com/sk666G/red-sky---arsenal/internal/capturer"
 	"github.com/sk666G/red-sky---arsenal/internal/crypto"
 	"github.com/sk666G/red-sky---arsenal/internal/dnsexfil"
+	"github.com/sk666G/red-sky---arsenal/internal/engagement"
 	"github.com/sk666G/red-sky---arsenal/internal/planner"
 	"github.com/sk666G/red-sky---arsenal/internal/plugin"
 	"github.com/sk666G/red-sky---arsenal/internal/proto"
@@ -36,6 +37,11 @@ import (
 	"github.com/sk666G/red-sky---arsenal/internal/wire"
 	"github.com/sk666G/red-sky---arsenal/internal/wireless"
 )
+
+// engDB is the package-level handle to the engagement DB.
+// Populated at startup after flags are parsed; nil before that.
+// Dispatchers read from it directly — see alpha.98.1.
+var engDB *engagement.DB
 
 func main() {
 	bind := flag.String("bind", "0.0.0.0", "listen address")
@@ -316,6 +322,16 @@ func main() {
 	}
 
 	mgr := session.NewManager()
+
+	// Open the engagement DB. State from every module lands here.
+	// The TUI reads host counts from it; dispatchers write through engDB.
+	db, dbErr := engagement.Open(*eng)
+	if dbErr != nil {
+		log.Fatalf("engagement.Open: %v", dbErr)
+	}
+	defer db.Close()
+	engDB = db
+	fmt.Printf("engagement DB: %s\n", db.Path())
 
 	addr := fmt.Sprintf("%s:%d", *bind, *port)
 	ln, err := net.Listen("tcp", addr)
@@ -916,7 +932,7 @@ func main() {
 	if *noLLM {
 		pl = nil // falls back to rule planner
 	}
-	p := tea.NewProgram(tui.New(mgr, *eng, *port, pl), tea.WithAltScreen())
+	p := tea.NewProgram(tui.New(mgr, engDB, *eng, *port, pl), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		log.Fatalf("tui: %v", err)
 	}
