@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -38,6 +39,7 @@ import (
 	rsTLS "github.com/sk666G/red-sky---arsenal/internal/tls"
 	"github.com/sk666G/red-sky---arsenal/internal/tui"
 	"github.com/sk666G/red-sky---arsenal/internal/tunnel"
+	"github.com/sk666G/red-sky---arsenal/internal/webgo"
 	"github.com/sk666G/red-sky---arsenal/internal/wire"
 	"github.com/sk666G/red-sky---arsenal/internal/wireless"
 )
@@ -2473,6 +2475,87 @@ func registerDataSink(mgr *session.Manager) {
 				log.Printf("[cloud %s] %s", d.Stage, agentHost)
 			}
 			return true
+		case proto.TypeWebSSRFData:
+			var d proto.WebSSRFData
+			if err := json.Unmarshal(env.Payload, &d); err != nil {
+				log.Printf("[ssrf] decode: %v", err)
+				return true
+			}
+			if d.Done || !d.OK {
+				if d.Done {
+					log.Printf("[ssrf] done")
+				} else if d.Err != "" {
+					log.Printf("[ssrf] %s", d.Err)
+				}
+				return true
+			}
+			if engDB != nil {
+				raw, _ := json.Marshal(d)
+				engDB.AddFinding(engagement.Finding{Module: "web:ssrf", Kind: "ssrf-probe", Data: raw})
+			}
+			classified := webgo.ClassifySSRF(d)
+			if len(classified) > 0 && engDB != nil {
+				host := hostFromURL(d.URL)
+				if host == "" {
+					host = "ssrf-unknown"
+				}
+				hostID, err := engDB.UpsertHost(engagement.Host{IP: host})
+				if err != nil {
+					log.Printf("[ssrf] upsert %s: %v", host, err)
+				} else {
+					for _, v := range classified {
+						engDB.AddVuln(engagement.Vuln{HostID: hostID, Name: v.Name, Severity: v.Severity, Evidence: v.Evidence})
+					}
+					log.Printf("[ssrf] %s — %d vuln(s)", host, len(classified))
+				}
+			}
+			return true
+
+		case proto.TypeWebReqData:
+			var d proto.WebReqData
+			if err := json.Unmarshal(env.Payload, &d); err != nil {
+				log.Printf("[webreq] decode: %v", err)
+				return true
+			}
+			if d.Done || d.Error != "" {
+				if d.Done {
+					log.Printf("[webreq] done")
+				} else {
+					log.Printf("[webreq] %s", d.Error)
+				}
+				return true
+			}
+			if engDB != nil {
+				raw, _ := json.Marshal(d)
+				engDB.AddFinding(engagement.Finding{Module: "web:req", Kind: "http-response", Data: raw})
+			}
+			classified := webgo.ClassifyWebReq(d)
+			if len(classified) > 0 && engDB != nil {
+				hostID, err := engDB.UpsertHost(engagement.Host{IP: "web-req-target"})
+				if err != nil {
+					log.Printf("[webreq] upsert: %v", err)
+				} else {
+					for _, v := range classified {
+						engDB.AddVuln(engagement.Vuln{HostID: hostID, Name: v.Name, Severity: v.Severity, Evidence: v.Evidence})
+					}
+				}
+			}
+			return true
+
+		case proto.TypeWebSSTIData, proto.TypeWebXSSData, proto.TypeWebXXEData:
+			var raw map[string]any
+			if err := json.Unmarshal(env.Payload, &raw); err != nil {
+				return true
+			}
+			if done, _ := raw["done"].(bool); done {
+				return true
+			}
+			if engDB != nil {
+				b, _ := json.Marshal(raw)
+				engDB.AddFinding(engagement.Finding{Module: "web:render", Kind: string(env.Type), Data: b})
+			}
+			return true
+
 		}
 		return false
 	})
@@ -2495,4 +2578,13 @@ func domainFromDN(dn string) string {
 		return "unknown-domain"
 	}
 	return strings.Join(parts, ".")
+}
+
+// hostFromURL extracts the hostname from a URL. Returns "" on parse error.
+func hostFromURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	return u.Hostname()
 }
