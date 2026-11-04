@@ -22,6 +22,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/sk666G/red-sky---arsenal/internal/adgo"
 	"github.com/sk666G/red-sky---arsenal/internal/capturer"
 	"github.com/sk666G/red-sky---arsenal/internal/crypto"
 	"github.com/sk666G/red-sky---arsenal/internal/dnsexfil"
@@ -2309,6 +2310,40 @@ func registerDataSink(mgr *session.Manager) {
 					}
 				}
 			}
+			// Classify the entry — turn it into zero or more vulns.
+			// Classifier is pure (internal/adgo/classify.go); this
+			// block is the wiring. Both the raw finding (above) and the
+			// classified vulns (here) land for every interesting entry.
+			classified := adgo.ClassifyEntry(d.Action, adgo.LDAPEntry{
+				DN:    d.DN,
+				Attrs: d.Attrs,
+			})
+			if d.Message != "" {
+				classified = append(classified, adgo.ClassifyMessage(d.Action, d.Message)...)
+			}
+			if len(classified) > 0 && engDB != nil {
+				domain := domainFromDN(d.DN)
+				hostID, err := engDB.UpsertHost(engagement.Host{
+					IP:       "ad:" + domain,
+					Hostname: domain,
+				})
+				if err != nil {
+					log.Printf("[adenum] upsert ad:%s: %v", domain, err)
+				} else {
+					for _, v := range classified {
+						if _, err := engDB.AddVuln(engagement.Vuln{
+							HostID:   hostID,
+							Name:     v.Name,
+							Severity: v.Severity,
+							Evidence: v.Evidence,
+						}); err != nil {
+							log.Printf("[adenum] add vuln %q: %v", v.Name, err)
+						}
+					}
+					log.Printf("[adenum] %d vuln(s) recorded for ad:%s", len(classified), domain)
+				}
+			}
+
 			// One line to stdout per entry — module: <first attr summary> DN
 			summary := d.DN
 			if v, ok := d.Attrs["sAMAccountName"]; ok && len(v) > 0 {
@@ -2321,4 +2356,23 @@ func registerDataSink(mgr *session.Manager) {
 		}
 		return false
 	})
+}
+
+// domainFromDN extracts the DNS domain from an LDAP distinguished name.
+// Example: "CN=alice,CN=Users,DC=corp,DC=local" -> "corp.local".
+// Used as the pseudo-host key for AD findings and vulns: since AD enum
+// doesn't carry the DC's IP, the domain becomes the row identity.
+// Falls back to "unknown-domain" when the DN has no DC= components.
+func domainFromDN(dn string) string {
+	parts := []string{}
+	for _, seg := range strings.Split(dn, ",") {
+		seg = strings.TrimSpace(seg)
+		if strings.HasPrefix(strings.ToUpper(seg), "DC=") {
+			parts = append(parts, seg[3:])
+		}
+	}
+	if len(parts) == 0 {
+		return "unknown-domain"
+	}
+	return strings.Join(parts, ".")
 }
