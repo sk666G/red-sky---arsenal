@@ -1132,6 +1132,21 @@ func runScanner(cidr, ports string, threads int, timeout time.Duration) {
 		mu.Lock()
 		results = append(results, r)
 		mu.Unlock()
+
+		// Persist the hit into the engagement DB. Idempotent: re-scanning
+		// the same host/port upserts the same row instead of duplicating.
+		if engDB != nil {
+			hostID, err := engDB.UpsertHost(engagement.Host{IP: r.Host})
+			if err == nil {
+				if _, err := engDB.UpsertService(engagement.Service{
+					HostID: hostID, Port: r.Port, Protocol: "tcp", State: "open",
+				}); err != nil {
+					log.Printf("[scanner] DB service: %v", err)
+				}
+			} else {
+				log.Printf("[scanner] DB host: %v", err)
+			}
+		}
 		fmt.Printf("[+] %s:%d\n", r.Host, r.Port)
 	})
 	if err != nil {
