@@ -126,7 +126,7 @@ func main() {
 	icsPropertyID := flag.Uint("ics-property", 85, "bacnet property id (85 = present-value)")
 	icsTag := flag.String("ics-tag", "", "enip: tag name")
 	icsDataType := flag.Uint("ics-datatype", 0xC4, "enip: CIP data type (0xC4=REAL, 0xC3=DINT)")
-	cloudAction := flag.String("cloud", "", "cloud action: probe|chain|identity|users|roles|simulate|driver")
+	cloudAction := flag.String("cloud", "", "cloud action: probe|chain|chain-identity|identity|users|roles|simulate|driver")
 	cloudProvider := flag.String("cloud-provider", "aws", "cloud provider: aws|gcp|azure (for probe)")
 	cloudKey := flag.String("cloud-key", "", "aws access key id")
 	cloudSecret := flag.String("cloud-secret", "", "aws secret access key")

