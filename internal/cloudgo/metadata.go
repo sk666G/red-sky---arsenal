@@ -5,9 +5,9 @@
 // Instance Metadata Service (IMDS) probes for AWS / GCP / Azure. Each cloud
 // exposes a well-known address reachable from any process on an instance:
 //
-//   AWS     http://169.254.169.254/latest/meta-data/
-//   GCP     http://metadata.google.internal/computeMetadata/v1/
-//   Azure   http://169.254.169.254/metadata/instance?api-version=...
+//	AWS     http://169.254.169.254/latest/meta-data/
+//	GCP     http://metadata.google.internal/computeMetadata/v1/
+//	Azure   http://169.254.169.254/metadata/instance?api-version=...
 //
 // AWS IMDSv1 is headerless — an SSRF or code exec reaches credentials in
 // one HTTP GET. IMDSv2 requires a PUT token first; many instances still
@@ -28,6 +28,9 @@ import (
 // IMDSOptions controls a metadata probe.
 type IMDSOptions struct {
 	Timeout time.Duration // per request; default 4s
+	// BaseURL overrides the per-cloud IMDS base URL for tests. Empty
+	// means use the built-in AWS / GCP / Azure hosts.
+	BaseURL string
 }
 
 func defaultTimeout(t time.Duration) time.Duration {
@@ -126,7 +129,11 @@ func ProbeAWS(opts IMDSOptions) []ProbeResult {
 	}
 	results := make([]ProbeResult, 0, len(awsPaths))
 	for _, p := range awsPaths {
-		url := "http://169.254.169.254" + p
+		base := "http://169.254.169.254"
+		if opts.BaseURL != "" {
+			base = opts.BaseURL
+		}
+		url := base + p
 		code, body, err := fetchGet(url, headers, opts.Timeout)
 		r := ProbeResult{Cloud: "aws", URL: url}
 		if err != nil {
@@ -148,7 +155,11 @@ func ProbeGCP(opts IMDSOptions) []ProbeResult {
 	headers := map[string]string{"Metadata-Flavor": "Google"}
 	results := make([]ProbeResult, 0, len(gcpPaths))
 	for _, p := range gcpPaths {
-		url := "http://metadata.google.internal" + p
+		base := "http://metadata.google.internal"
+		if opts.BaseURL != "" {
+			base = opts.BaseURL
+		}
+		url := base + p
 		code, body, err := fetchGet(url, headers, opts.Timeout)
 		r := ProbeResult{Cloud: "gcp", URL: url}
 		if err != nil {
@@ -170,7 +181,11 @@ func ProbeAzure(opts IMDSOptions) []ProbeResult {
 	headers := map[string]string{"Metadata": "true"}
 	results := make([]ProbeResult, 0, len(azurePaths))
 	for _, p := range azurePaths {
-		url := "http://169.254.169.254" + p
+		base := "http://169.254.169.254"
+		if opts.BaseURL != "" {
+			base = opts.BaseURL
+		}
+		url := base + p
 		code, body, err := fetchGet(url, headers, opts.Timeout)
 		r := ProbeResult{Cloud: "azure", URL: url}
 		if err != nil {
