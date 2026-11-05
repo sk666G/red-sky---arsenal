@@ -1096,6 +1096,21 @@ func runIcsModbus(ctx context.Context, ic proto.IcsStart, send func(string, stri
 			}
 			send("write", "multi ok", fmt.Sprintf("exc=%d", res.Exception), res.Exception == 0, false)
 		}
+	case "dump":
+		// Bulk range read: hit the holding-register block from
+		// ic.Start for ic.Count registers using function 3. Send
+		// back the full register snapshot in one frame.
+		res, err := icsgo.ModbusRead(opts, icsgo.MBFuncReadHolding, ic.Start, ic.Count)
+		if err != nil {
+			send("dump", "read error", err.Error(), false, false)
+			return
+		}
+		if res.Exception != 0 {
+			send("dump", "exception", fmt.Sprintf("code 0x%02x", res.Exception), false, false)
+			return
+		}
+		det := fmt.Sprintf("start=%d count=%d regs=%v", ic.Start, len(res.Regs), res.Regs)
+		send("dump", "ok", det, true, false)
 	}
 }
 
