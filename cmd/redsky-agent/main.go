@@ -1614,6 +1614,28 @@ func runIcsBACnet(ctx context.Context, ic proto.IcsStart, send func(string, stri
 		if len(results) == 0 {
 			send("scan", "no devices responded", "", false, false)
 		}
+	case "integrity":
+		results, err := icsgo.WhoIsScan(opts, 0, 0xFFFF)
+		if err != nil {
+			send("integrity", "bacnet who-is error", err.Error(), false, false)
+			return
+		}
+		det := fmt.Sprintf("devices=%d", len(results))
+		send("integrity", "ok", det, true, false)
+	case "poll":
+		first, err := icsgo.ReadPropertyValue(opts, ic.ObjType, ic.ObjInstance, ic.PropertyID)
+		if err != nil {
+			send("poll", "first read error", err.Error(), false, false)
+			return
+		}
+		second, err := icsgo.ReadPropertyValue(opts, ic.ObjType, ic.ObjInstance, ic.PropertyID)
+		if err != nil {
+			send("poll", "second read error", err.Error(), false, false)
+			return
+		}
+		changed := !equalBytes(first, second)
+		det := fmt.Sprintf("changed=%t first=%x second=%x", changed, first, second)
+		send("poll", "ok", det, true, false)
 	case "read":
 		raw, err := icsgo.ReadPropertyValue(opts, ic.ObjType, ic.ObjInstance, ic.PropertyID)
 		if err != nil {
@@ -1667,6 +1689,34 @@ func runIcsENIP(ctx context.Context, ic proto.IcsStart, send func(string, string
 		if len(ids) == 0 {
 			send("scan", "no identity response", "", false, false)
 		}
+	case "integrity":
+		ids, err := icsgo.ListIdentity(opts)
+		if err != nil {
+			send("integrity", "enip list-identity error", err.Error(), false, false)
+			return
+		}
+		det := fmt.Sprintf("devices=%d", len(ids))
+		send("integrity", "ok", det, true, false)
+	case "poll":
+		session, conn, err := icsgo.RegisterSession(opts)
+		if err != nil {
+			send("poll", "register session error", err.Error(), false, false)
+			return
+		}
+		defer conn.Close()
+		first, err := icsgo.CIPReadTag(conn, session, ic.Tag, 5*time.Second)
+		if err != nil {
+			send("poll", "first read error", err.Error(), false, false)
+			return
+		}
+		second, err := icsgo.CIPReadTag(conn, session, ic.Tag, 5*time.Second)
+		if err != nil {
+			send("poll", "second read error", err.Error(), false, false)
+			return
+		}
+		changed := !equalBytes(first, second)
+		det := fmt.Sprintf("changed=%t first=%x second=%x", changed, first, second)
+		send("poll", "ok", det, true, false)
 	case "read":
 		session, conn, err := icsgo.RegisterSession(opts)
 		if err != nil {
