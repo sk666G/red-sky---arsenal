@@ -173,6 +173,7 @@ func main() {
 	adEnum := flag.String("adenum", "", "AD enumeration action: rootdse|domain|users|groups|computers|gpos|trusts|asrep|kerberoast|unconstrained|pwdnotreq|laps|adcs")
 	adHost := flag.String("ad-host", "", "domain controller ip/hostname")
 	adPort := flag.Int("ad-port", 389, "LDAP port (389 or 636)")
+	adUPN := flag.String("ad-upn", "", "target UPN for -adenum enroll (e.g. Administrator@corp.local)")
 	adTLS := flag.Bool("ad-tls", false, "use LDAPS")
 	adBindDN := flag.String("ad-bind-dn", "", "LDAP bind DN")
 	adBindPW := flag.String("ad-bind-pw", "", "LDAP bind password")
@@ -711,6 +712,7 @@ func main() {
 			KerbDC:      *kerbDC,
 			KerbSPN:     *kerbSPN,
 			KerbPort:    *kerbPort,
+			UPN:         *adUPN,
 		})
 	}
 
@@ -1813,6 +1815,7 @@ type adEnumArgs struct {
 	KerbDC      string
 	KerbSPN     string
 	KerbPort    int
+	UPN         string
 }
 
 // runAdEnumDispatch waits for the first agent, fires an AdEnumStart.
@@ -1860,6 +1863,7 @@ func runAdEnumDispatch(mgr *session.Manager, a adEnumArgs) {
 		KerbDC:      a.KerbDC,
 		KerbSPN:     a.KerbSPN,
 		KerbPort:    a.KerbPort,
+		TargetUPN:   a.UPN,
 	}
 	if err := s.SendAdEnumStart(sessionID, req); err != nil {
 		log.Printf("[adenum] start: %v", err)

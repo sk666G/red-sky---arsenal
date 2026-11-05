@@ -636,6 +636,10 @@ type AdEnumStart struct {
 	KerbDC    string `json:"kerb_dc,omitempty"`
 	KerbSPN   string `json:"kerb_spn,omitempty"`
 	KerbPort  int    `json:"kerb_port,omitempty"`
+	// ADCS enrollment path — target UPN for certipy -upn flag.
+	// The CA hostname and template name come from prior -adenum adcs
+	// output; the operator picks them off the classified vuln list.
+	TargetUPN string `json:"target_upn,omitempty"`
 }
 
 // AdEnumData streams one LDAP entry per message, plus done / error markers.
