@@ -1111,6 +1111,32 @@ func runIcsModbus(ctx context.Context, ic proto.IcsStart, send func(string, stri
 		}
 		det := fmt.Sprintf("start=%d count=%d regs=%v", ic.Start, len(res.Regs), res.Regs)
 		send("dump", "ok", det, true, false)
+	case "integrity":
+		alive, err := icsgo.ModbusUnitScan(ic.Host, ic.Port, 1, 247, 0)
+		if err != nil {
+			send("integrity", "scan error", err.Error(), false, false)
+			return
+		}
+		det := fmt.Sprintf("units=%d ids=%v", len(alive), alive)
+		send("integrity", "ok", det, true, false)
+	case "poll":
+		first, err := icsgo.ModbusRead(opts, icsgo.MBFuncReadHolding, ic.Start, ic.Count)
+		if err != nil {
+			send("poll", "first read error", err.Error(), false, false)
+			return
+		}
+		if first.Exception != 0 {
+			send("poll", "first exception", fmt.Sprintf("code 0x%02x", first.Exception), false, false)
+			return
+		}
+		second, err := icsgo.ModbusRead(opts, icsgo.MBFuncReadHolding, ic.Start, ic.Count)
+		if err != nil {
+			send("poll", "second read error", err.Error(), false, false)
+			return
+		}
+		changed := !equalRegs(first.Regs, second.Regs)
+		det := fmt.Sprintf("changed=%t first=%v second=%v", changed, first.Regs, second.Regs)
+		send("poll", "ok", det, true, false)
 	}
 }
 
@@ -1143,6 +1169,28 @@ func runIcsS7(ctx context.Context, ic proto.IcsStart, send func(string, string, 
 			return
 		}
 		send("write", "ok", "", true, false)
+	case "integrity":
+		data, err := c.S7ReadSZL(0x001C)
+		if err != nil {
+			send("integrity", "szl 0x1C error", err.Error(), false, false)
+			return
+		}
+		det := fmt.Sprintf("szl0x1c hex=%x len=%d", data, len(data))
+		send("integrity", "ok", det, true, false)
+	case "poll":
+		first, err := c.S7Read(ic.Area, ic.DB, ic.Start, ic.Count)
+		if err != nil {
+			send("poll", "first read error", err.Error(), false, false)
+			return
+		}
+		second, err := c.S7Read(ic.Area, ic.DB, ic.Start, ic.Count)
+		if err != nil {
+			send("poll", "second read error", err.Error(), false, false)
+			return
+		}
+		changed := !equalBytes(first, second)
+		det := fmt.Sprintf("changed=%t first=%x second=%x", changed, first, second)
+		send("poll", "ok", det, true, false)
 	}
 }
 
@@ -3010,4 +3058,31 @@ func redactJWT(t string) string {
 		return t
 	}
 	return t[:20] + "…" + t[len(t)-8:]
+}
+
+// equalRegs reports whether two uint16 slices are equal. Used by the
+// ICS poll action to detect state changes between two reads.
+func equalRegs(a, b []uint16) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// equalBytes reports whether two byte slices are equal.
+func equalBytes(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
