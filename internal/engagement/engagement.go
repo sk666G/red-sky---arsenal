@@ -419,6 +419,138 @@ func (d *DB) walkNode(h Host, kind, evidence string, depth, maxDepth int, visite
 	return n, nil
 }
 
+// Suggestion is one recommended next move off the current graph state.
+// Rule names the pattern that fired, FromID/ToID name the hosts
+// involved (ToID 0 for single-host rules), Detail is the human string.
+type Suggestion struct {
+	Rule   string
+	FromID int64
+	ToID   int64
+	Detail string
+}
+
+// Suggest walks the graph state — hosts, their vulns and creds, and
+// their outgoing edges — and returns pattern-matched next moves.
+// Empty fromID means "suggest across all hosts". Rules are drawn from
+// information already in the DB; this is not an oracle, it is a lookup
+// table of common progression patterns.
+func (d *DB) Suggest(fromID int64) ([]Suggestion, error) {
+	hosts, err := d.Hosts()
+	if err != nil {
+		return nil, err
+	}
+	var out []Suggestion
+	for _, h := range hosts {
+		if fromID != 0 && h.ID != fromID {
+			continue
+		}
+		vulns, err := d.Vulns(h.ID)
+		if err != nil {
+			return nil, err
+		}
+		creds, err := d.Creds(h.ID)
+		if err != nil {
+			return nil, err
+		}
+		edges, err := d.EdgesFrom(h.ID)
+		if err != nil {
+			return nil, err
+		}
+		for _, sug := range suggestForHost(h, vulns, creds, edges) {
+			out = append(out, sug)
+		}
+	}
+	return out, nil
+}
+
+func suggestForHost(h Host, vulns []Vuln, creds []Cred, edges []Edge) []Suggestion {
+	var out []Suggestion
+	hasCreds := len(creds) > 0
+	adminVuln := false
+	infoVuln := false
+	for _, v := range vulns {
+		s := ""
+		if v.Severity != "" {
+			s = string(v.Severity[0])
+		}
+		if s == "c" || s == "h" || s == "e" {
+			adminVuln = true
+		}
+		if s == "l" || s == "i" || s == "m" {
+			infoVuln = true
+		}
+	}
+
+	for _, e := range edges {
+		if hasCreds {
+			out = append(out, Suggestion{
+				Rule:   "creds-lateral",
+				FromID: h.ID,
+				ToID:   e.ToID,
+				Detail: "pass-the-hash " + h.IP + " -> " + kindToLabel(e.Kind),
+			})
+		}
+		if adminVuln {
+			out = append(out, Suggestion{
+				Rule:   "escalate-reach",
+				FromID: h.ID,
+				ToID:   e.ToID,
+				Detail: "escalate " + h.IP + " then reach " + kindToLabel(e.Kind),
+			})
+		}
+	}
+	if hasCreds && len(edges) == 0 {
+		out = append(out, Suggestion{
+			Rule:   "orphan-creds",
+			FromID: h.ID,
+			Detail: "creds captured on " + h.IP + " with no known target — enumerate",
+		})
+	}
+	if len(edges) > 0 && !hasCreds {
+		out = append(out, Suggestion{
+			Rule:   "orphan-trust",
+			FromID: h.ID,
+			Detail: h.IP + " has outgoing relationships but no creds — collect first",
+		})
+	}
+	if infoVuln && !adminVuln {
+		out = append(out, Suggestion{
+			Rule:   "info-only",
+			FromID: h.ID,
+			Detail: h.IP + " has info-level findings only — enumerate deeper",
+		})
+	}
+	if len(edges) >= 3 {
+		out = append(out, Suggestion{
+			Rule:   "hub",
+			FromID: h.ID,
+			Detail: h.IP + " is a hub with " + itoa(len(edges)) + " outgoing edges — prioritize",
+		})
+	}
+	return out
+}
+
+func kindToLabel(k string) string {
+	if k == "" {
+		return "target"
+	}
+	return "via " + k
+}
+
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var b [20]byte
+	i := len(b)
+	for n > 0 {
+		i--
+		b[i] = byte('0' + n%10)
+		n /= 10
+	}
+	return string(b[i:])
+}
+
 func (d *DB) AddCred(c Cred) (int64, error) {
 	if c.HostID == 0 || c.User == "" {
 		return 0, errors.New("engagement: cred without host_id or user")

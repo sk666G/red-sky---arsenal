@@ -2841,6 +2841,9 @@ func printLootQuery(db *engagement.DB, q string) error {
 
 	// Chain is handled by a helper BEFORE the switch — keeps switch arms
 	// untouched so this file stays stable through future ticket additions.
+	if fields[0] == "suggest" {
+		return runSuggest(db, fields)
+	}
 	if fields[0] == "chain" {
 		return runChainQuery(db, fields)
 	}
@@ -2985,4 +2988,33 @@ func printChainTree(root engagement.ChainNode) {
 		}
 	}
 	walk(root, "")
+}
+
+// runSuggest handles `suggest [from <host-id>]` — pattern-matched next
+// moves from the current graph state.
+func runSuggest(db *engagement.DB, fields []string) error {
+	var fromID int64
+	if len(fields) >= 3 && fields[1] == "from" {
+		id, err := strconv.ParseInt(fields[2], 10, 64)
+		if err != nil {
+			return fmt.Errorf("suggest from: bad host id %q", fields[2])
+		}
+		fromID = id
+	}
+	sugs, err := db.Suggest(fromID)
+	if err != nil {
+		return fmt.Errorf("suggest: %w", err)
+	}
+	if len(sugs) == 0 {
+		fmt.Println("no suggestions — graph is quiet or empty")
+		return nil
+	}
+	for _, s := range sugs {
+		if s.ToID != 0 {
+			fmt.Printf("%-16s\t[%d] -> [%d]\t%s\n", s.Rule, s.FromID, s.ToID, s.Detail)
+		} else {
+			fmt.Printf("%-16s\t[%d]\t%s\n", s.Rule, s.FromID, s.Detail)
+		}
+	}
+	return nil
 }
