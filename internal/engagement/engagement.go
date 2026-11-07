@@ -341,6 +341,84 @@ func (d *DB) EdgesFrom(fromID int64) ([]Edge, error) {
 }
 
 // AddCred appends a credential row.
+// ChainNode is one node in the reachability tree produced by WalkFrom.
+// Depth 0 is the origin host. Children are the hosts reachable from
+// this node via outgoing edges, up to MaxDepth. Cycle marks a node
+// whose ID was already visited on this branch — its children are not
+// expanded, so a graph cycle renders as a leaf instead of looping.
+type ChainNode struct {
+	HostID   int64
+	HostIP   string
+	Kind     string
+	Evidence string
+	Depth    int
+	Cycle    bool
+	Children []ChainNode
+}
+
+// WalkFrom returns the reachability tree rooted at fromID. Depth is
+// capped at maxDepth (clamped to 1..16, default 6 if <=0). Cycles are
+// detected per-branch via the visited set, so a diamond graph expands
+// both arms while a back-edge marks Cycle and stops. Bounded: no more
+// than maxDepth*64 nodes are expanded even on a hostile graph.
+func (d *DB) WalkFrom(fromID int64, maxDepth int) (ChainNode, error) {
+	if maxDepth <= 0 {
+		maxDepth = 6
+	}
+	if maxDepth > 16 {
+		maxDepth = 16
+	}
+	hosts, err := d.Hosts()
+	if err != nil {
+		return ChainNode{}, err
+	}
+	byID := make(map[int64]Host, len(hosts))
+	for _, h := range hosts {
+		byID[h.ID] = h
+	}
+	root, ok := byID[fromID]
+	if !ok {
+		return ChainNode{}, fmt.Errorf("engagement: no host with id %d", fromID)
+	}
+	node, err := d.walkNode(root, "", "", 0, maxDepth, map[int64]bool{fromID: true}, 0)
+	if err != nil {
+		return ChainNode{}, err
+	}
+	return node, nil
+}
+
+func (d *DB) walkNode(h Host, kind, evidence string, depth, maxDepth int, visited map[int64]bool, budget int) (ChainNode, error) {
+	n := ChainNode{
+		HostID:   h.ID,
+		HostIP:   h.IP,
+		Kind:     kind,
+		Evidence: evidence,
+		Depth:    depth,
+	}
+	if depth >= maxDepth || budget >= maxDepth*64 {
+		return n, nil
+	}
+	edges, err := d.EdgesFrom(h.ID)
+	if err != nil {
+		return n, err
+	}
+	for _, e := range edges {
+		if visited[e.ToID] {
+			child := ChainNode{HostID: e.ToID, Kind: e.Kind, Evidence: e.Evidence, Depth: depth + 1, Cycle: true}
+			n.Children = append(n.Children, child)
+			continue
+		}
+		visited[e.ToID] = true
+		child, err := d.walkNode(Host{ID: e.ToID}, e.Kind, e.Evidence, depth+1, maxDepth, visited, budget+len(n.Children)+1)
+		delete(visited, e.ToID)
+		if err != nil {
+			return n, err
+		}
+		n.Children = append(n.Children, child)
+	}
+	return n, nil
+}
+
 func (d *DB) AddCred(c Cred) (int64, error) {
 	if c.HostID == 0 || c.User == "" {
 		return 0, errors.New("engagement: cred without host_id or user")

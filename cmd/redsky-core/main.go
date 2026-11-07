@@ -2839,6 +2839,12 @@ func printLootQuery(db *engagement.DB, q string) error {
 		return fmt.Errorf("empty query")
 	}
 
+	// Chain is handled by a helper BEFORE the switch — keeps switch arms
+	// untouched so this file stays stable through future ticket additions.
+	if fields[0] == "chain" {
+		return runChainQuery(db, fields)
+	}
+
 	switch fields[0] {
 	case "hosts":
 		hosts, err := db.Hosts()
@@ -2924,4 +2930,59 @@ func splitQuery(q string) []string {
 		out = append(out, string(cur))
 	}
 	return out
+}
+
+// runChainQuery handles `chain from <host-id> [depth]` — parsed outside
+// the main switch so the switch arms stay untouched.
+func runChainQuery(db *engagement.DB, fields []string) error {
+	if len(fields) < 3 || fields[1] != "from" {
+		return fmt.Errorf("chain: usage: chain from <host-id> [depth]")
+	}
+	id, err := strconv.ParseInt(fields[2], 10, 64)
+	if err != nil {
+		return fmt.Errorf("chain from: bad host id %q", fields[2])
+	}
+	depth := 6
+	if len(fields) >= 4 {
+		d, err := strconv.Atoi(fields[3])
+		if err != nil {
+			return fmt.Errorf("chain from: bad depth %q", fields[3])
+		}
+		depth = d
+	}
+	tree, err := db.WalkFrom(id, depth)
+	if err != nil {
+		return fmt.Errorf("chain from: %w", err)
+	}
+	printChainTree(tree)
+	return nil
+}
+
+// printChainTree renders a ChainNode tree with depth-indented edges.
+func printChainTree(root engagement.ChainNode) {
+	var walk func(n engagement.ChainNode, prefix string)
+	walk = func(n engagement.ChainNode, prefix string) {
+		var label string
+		if n.Depth == 0 {
+			label = fmt.Sprintf("[%d]", n.HostID)
+		} else if n.Cycle {
+			label = fmt.Sprintf("%s-> [%d] [cycle]", prefix, n.HostID)
+		} else if n.Kind != "" {
+			label = fmt.Sprintf("%s-> [%d] via %s", prefix, n.HostID, n.Kind)
+		} else {
+			label = fmt.Sprintf("%s-> [%d]", prefix, n.HostID)
+		}
+		if n.Evidence != "" {
+			label += " (" + n.Evidence + ")"
+		}
+		fmt.Println(label)
+		for _, c := range n.Children {
+			if n.Depth == 0 {
+				walk(c, "  ")
+			} else {
+				walk(c, prefix+"  ")
+			}
+		}
+	}
+	walk(root, "")
 }
