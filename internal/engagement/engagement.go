@@ -79,6 +79,20 @@ type Finding struct {
 	TS     time.Time
 }
 
+// Edge is a directed relationship between two hosts. Kind values are
+// freeform strings chosen by the module that discovered the edge:
+// "creds" (host A holds creds for host B), "trust" (AD trust direction),
+// "reach" (A can route to B), "pivot" (A holds a session on B). Any
+// family that wants to contribute edges just writes one.
+type Edge struct {
+	ID       int64
+	FromID   int64
+	ToID     int64
+	Kind     string
+	Evidence string
+	TS       time.Time
+}
+
 // Open opens (or creates) the engagement DB and runs schema migrations.
 // The engagement name maps to ~/.redsky/engagements/<name>/engagement.db.
 func Open(engagementName string) (*DB, error) {
@@ -169,6 +183,17 @@ CREATE INDEX IF NOT EXISTS idx_vulns_host ON vulns(host_id);
 CREATE INDEX IF NOT EXISTS idx_creds_host ON creds(host_id);
 CREATE INDEX IF NOT EXISTS idx_findings_module ON findings(module);
 CREATE INDEX IF NOT EXISTS idx_findings_host ON findings(host_id);
+CREATE TABLE IF NOT EXISTS edges (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    from_host_id  INTEGER NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
+    to_host_id    INTEGER NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
+    kind          TEXT NOT NULL,
+    evidence      TEXT,
+    ts            INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_edges_from ON edges(from_host_id);
+CREATE INDEX IF NOT EXISTS idx_edges_to ON edges(to_host_id);
+CREATE INDEX IF NOT EXISTS idx_edges_kind ON edges(kind);
 `
 	_, err := d.sql.Exec(schema)
 	if err != nil {
@@ -253,6 +278,66 @@ func (d *DB) AddVuln(v Vuln) (int64, error) {
 		return 0, fmt.Errorf("engagement: add vuln: %w", err)
 	}
 	return res.LastInsertId()
+}
+
+// AddEdge inserts a directed relationship between two hosts. Kind is
+// a freeform label chosen by the caller — "creds", "trust", "reach",
+// "pivot", or any family-specific string. Empty Kind is rejected so
+// the graph stays addressable.
+func (d *DB) AddEdge(e Edge) (int64, error) {
+	if e.FromID == 0 || e.ToID == 0 || e.Kind == "" {
+		return 0, errors.New("engagement: edge needs from_host_id, to_host_id, and kind")
+	}
+	if e.TS.IsZero() {
+		e.TS = time.Now()
+	}
+	res, err := d.sql.Exec(`INSERT INTO edges(from_host_id, to_host_id, kind, evidence, ts) VALUES(?, ?, ?, ?, ?)`,
+		e.FromID, e.ToID, e.Kind, e.Evidence, e.TS.Unix())
+	if err != nil {
+		return 0, fmt.Errorf("engagement: add edge: %w", err)
+	}
+	return res.LastInsertId()
+}
+
+// Edges returns every edge in the graph, newest first.
+func (d *DB) Edges() ([]Edge, error) {
+	rows, err := d.sql.Query(`SELECT id, from_host_id, to_host_id, kind, COALESCE(evidence,''), ts FROM edges ORDER BY ts DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Edge
+	for rows.Next() {
+		var e Edge
+		var ts int64
+		if err := rows.Scan(&e.ID, &e.FromID, &e.ToID, &e.Kind, &e.Evidence, &ts); err != nil {
+			return nil, err
+		}
+		e.TS = time.Unix(ts, 0)
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// EdgesFrom returns edges whose FromID matches the given host. This is
+// the query the graph walker and the loot-query CLI both use.
+func (d *DB) EdgesFrom(fromID int64) ([]Edge, error) {
+	rows, err := d.sql.Query(`SELECT id, from_host_id, to_host_id, kind, COALESCE(evidence,''), ts FROM edges WHERE from_host_id = ? ORDER BY ts DESC`, fromID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Edge
+	for rows.Next() {
+		var e Edge
+		var ts int64
+		if err := rows.Scan(&e.ID, &e.FromID, &e.ToID, &e.Kind, &e.Evidence, &ts); err != nil {
+			return nil, err
+		}
+		e.TS = time.Unix(ts, 0)
+		out = append(out, e)
+	}
+	return out, rows.Err()
 }
 
 // AddCred appends a credential row.

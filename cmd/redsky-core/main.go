@@ -252,6 +252,7 @@ func main() {
 	reportOut := flag.String("report-out", "", "output path (default: /tmp/redsky_report_<ts>.md)")
 	reportFromDB := flag.Bool("report-from-db", false, "render a report from the engagement DB (core-side, no agent)")
 	engagementStats := flag.Bool("engagement-stats", false, "print engagement DB summary (host/vuln/finding counts) and exit")
+	lootQuery := flag.String("loot-query", "", "query the engagement graph and exit: hosts | vulns <sev> | edges | edges from <id>")
 	webReqURL := flag.String("webreq", "", "send a raw HTTP request via the first agent")
 	webReqMethod := flag.String("webreq-method", "GET", "HTTP method")
 	webReqBody := flag.String("webreq-body", "", "request body (string)")
@@ -343,6 +344,12 @@ func main() {
 	}
 	defer db.Close()
 	engDB = db
+	if *lootQuery != "" {
+		if err := printLootQuery(db, *lootQuery); err != nil {
+			log.Fatalf("-loot-query: %v", err)
+		}
+		return
+	}
 	if *engagementStats {
 		if err := printEngagementStats(db); err != nil {
 			log.Fatalf("-engagement-stats: %v", err)
@@ -2814,4 +2821,107 @@ func printEngagementStats(db *engagement.DB) error {
 		fmt.Printf("  [%-8s] %s — %s\n", v.sev, v.name, v.host)
 	}
 	return nil
+}
+
+// printLootQuery is the tiny graph CLI. Query grammar:
+//
+//	hosts             -- list every host (id, ip, hostname)
+//	vulns <severity>  -- vulns filtered by severity (critical/high/medium/low/info)
+//	vulns             -- every vuln
+//	edges             -- every edge in the graph
+//	edges from <id>   -- outgoing edges from a specific host id
+//
+// Unknown query shapes refuse with a one-line help message — never a
+// silent no-op.
+func printLootQuery(db *engagement.DB, q string) error {
+	fields := splitQuery(q)
+	if len(fields) == 0 {
+		return fmt.Errorf("empty query")
+	}
+
+	switch fields[0] {
+	case "hosts":
+		hosts, err := db.Hosts()
+		if err != nil {
+			return fmt.Errorf("hosts: %w", err)
+		}
+		for _, h := range hosts {
+			name := h.Hostname
+			if name == "" {
+				name = "-"
+			}
+			fmt.Printf("%d\t%s\t%s\n", h.ID, h.IP, name)
+		}
+		return nil
+
+	case "vulns":
+		sevFilter := ""
+		if len(fields) >= 2 {
+			sevFilter = strings.ToLower(fields[1])
+		}
+		hosts, err := db.Hosts()
+		if err != nil {
+			return fmt.Errorf("hosts: %w", err)
+		}
+		for _, h := range hosts {
+			vulns, err := db.Vulns(h.ID)
+			if err != nil {
+				return fmt.Errorf("vulns host %d: %w", h.ID, err)
+			}
+			for _, v := range vulns {
+				if sevFilter != "" && strings.ToLower(v.Severity) != sevFilter {
+					continue
+				}
+				fmt.Printf("%d\t%s\t%-8s\t%s\t%s\n", v.ID, h.IP, v.Severity, v.Name, v.Evidence)
+			}
+		}
+		return nil
+
+	case "edges":
+		if len(fields) >= 3 && fields[1] == "from" {
+			id, err := strconv.ParseInt(fields[2], 10, 64)
+			if err != nil {
+				return fmt.Errorf("edges from: bad host id %q", fields[2])
+			}
+			edges, err := db.EdgesFrom(id)
+			if err != nil {
+				return fmt.Errorf("edges from: %w", err)
+			}
+			for _, e := range edges {
+				fmt.Printf("%d\t%d -> %d\t%s\t%s\n", e.ID, e.FromID, e.ToID, e.Kind, e.Evidence)
+			}
+			return nil
+		}
+		edges, err := db.Edges()
+		if err != nil {
+			return fmt.Errorf("edges: %w", err)
+		}
+		for _, e := range edges {
+			fmt.Printf("%d\t%d -> %d\t%s\t%s\n", e.ID, e.FromID, e.ToID, e.Kind, e.Evidence)
+		}
+		return nil
+	}
+
+	return fmt.Errorf("unknown query: %q — try: hosts | vulns [severity] | edges | edges from <host-id>", q)
+}
+
+// splitQuery splits the loot-query string on whitespace without
+// touching quoted segments. Simple, no shell parsing.
+func splitQuery(q string) []string {
+	var out []string
+	var cur []rune
+	for _, r := range q {
+		if r == ' ' || r == '\t' || r == '\n' {
+			if len(cur) > 0 {
+				out = append(out, string(cur))
+				cur = cur[:0]
+			}
+			continue
+		}
+		cur = append(cur, r)
+	}
+	if len(cur) > 0 {
+		out = append(out, string(cur))
+	}
+	return out
 }
